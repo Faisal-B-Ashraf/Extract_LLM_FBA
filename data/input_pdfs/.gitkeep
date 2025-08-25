@@ -1,0 +1,11 @@
+# PDF Input Directory
+
+Place your PDF documents in this directory for processing.
+
+Example:
+```bash
+cp your_document.pdf data/input_pdfs/
+cp another_document.pdf data/input_pdfs/
+```
+
+The pipeline will automatically detect and process all `.pdf` files in this directory.

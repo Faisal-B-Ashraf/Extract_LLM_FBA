@@ -1,0 +1,13 @@
+# PDF Processing
+pdfplumber
+
+# Data Analysis & Visualization
+pandas
+matplotlib
+seaborn
+numpy
+
+# HTTP Requests (for Ollama helper)
+requests
+
+# All other dependencies are Python standard library

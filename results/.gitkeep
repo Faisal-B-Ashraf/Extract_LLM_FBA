@@ -1,0 +1,8 @@
+# Results Directory
+
+This directory will contain:
+- CSV files with extraction results
+- Performance timing data
+- Model comparison outputs
+
+Files are generated automatically when running the pipeline scripts.
