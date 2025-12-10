@@ -10,6 +10,7 @@ from pdf_processor_min_flow import extract_text_from_pdf, split_text_by_tokens
 from api_handler import enhanced_flow_extraction, check_ollama_server
 from task_definitions_min_flow import get_prompts
 from config import get_pdf_folder, ensure_directories, validate_setup, MODELS
+from flow_scoring import apply_flow_scoring
 
 # ✅ Configure logging
 logging.basicConfig(
@@ -234,16 +235,33 @@ def enhanced_flow_extraction_with_model(document_text, task, filename, model_nam
     
     return result
 
-def save_results_for_model(pdf_file, final_values, task_hashes, results_file):
+def save_results_for_model(pdf_file, final_values, task_hashes=None, results_file=""):
     """📂 Save extracted results in clean CSV format for specific model."""
     
-    # Clean project name from filename
-    project_name = pdf_file.replace('.pdf', '').replace('_', ' ')
+    import re
+    
+    # Get project name from LLM extraction (or fallback to cleaned filename)
+    extracted_name = final_values.get('Project_Name', {}).get('value', 'Not mentioned')
+    if extracted_name and extracted_name != 'Not mentioned':
+        project_name = extracted_name
+    else:
+        # Fallback: Clean project name from filename
+        project_name = pdf_file.replace('.pdf', '')
+        project_name = re.sub(r'_\d{8}', '', project_name)
+        project_name = re.sub(r'_\d{6}', '', project_name)
+        project_name = re.sub(r'\d{8}', '', project_name)
+        project_name = re.sub(r'_License.*', '', project_name)
+        project_name = re.sub(r'_WCM.*', '', project_name)
+        project_name = re.sub(r'_Manual.*', '', project_name)
+        project_name = re.sub(r'_Redacted', '', project_name, flags=re.IGNORECASE)
+        project_name = re.sub(r'_OCT\d{4}', '', project_name)
+        project_name = project_name.replace('_', ' ').strip()
     
     # Read existing results
     rows = []
-    headers = ["Row_Number", "Project_Name", "filename", "Minimum_Flow Value", 
-               "Minimum_Flow Inferred Context", "Minimum_Flow Exact Sentences", "Minimum_Flow Hash"]
+    headers = ["Row_Number", "Project_Name", "filename", "Project_Location",
+               "Minimum_Flow Value", "Minimum_Flow Inferred Context", 
+               "Minimum_Flow Exact Sentences"]
     
     if os.path.exists(results_file):
         with open(results_file, 'r', newline='', encoding='utf-8') as csvfile:
@@ -255,10 +273,10 @@ def save_results_for_model(pdf_file, final_values, task_hashes, results_file):
     for i, row in enumerate(rows):
         if row["filename"] == pdf_file:
             # Update existing row
+            rows[i]["Project_Location"] = final_values["Project_Location"]["value"]
             rows[i]["Minimum_Flow Value"] = final_values["Minimum_Flow"]["value"]
             rows[i]["Minimum_Flow Inferred Context"] = final_values["Minimum_Flow"]["inferred_context"]
             rows[i]["Minimum_Flow Exact Sentences"] = final_values["Minimum_Flow"]["exact_sentences"]
-            rows[i]["Minimum_Flow Hash"] = task_hashes["Minimum_Flow"]
             found_existing = True
             break
     
@@ -268,10 +286,10 @@ def save_results_for_model(pdf_file, final_values, task_hashes, results_file):
             "Row_Number": len(rows) + 1,
             "Project_Name": project_name,
             "filename": pdf_file,
+            "Project_Location": final_values["Project_Location"]["value"],
             "Minimum_Flow Value": final_values["Minimum_Flow"]["value"],
             "Minimum_Flow Inferred Context": final_values["Minimum_Flow"]["inferred_context"],
-            "Minimum_Flow Exact Sentences": final_values["Minimum_Flow"]["exact_sentences"],
-            "Minimum_Flow Hash": task_hashes["Minimum_Flow"]
+            "Minimum_Flow Exact Sentences": final_values["Minimum_Flow"]["exact_sentences"]
         }
         rows.append(new_row)
 
@@ -336,32 +354,62 @@ def process_file_with_model(pdf_file, pdf_folder, model_config, existing_results
     
     # 🎯 Use optimized baseline prompts
     prompts = get_prompts()
-    enhanced_task = prompts["Minimum_Flow"]
     
-    # Use modified flow extraction with specified model
+    # Extract Project Name (use first 15000 chars where name is typically mentioned)
+    name_text = text[:15000]
+    name_task = prompts["Project_Name"]
+    name_result = enhanced_flow_extraction_with_model(
+        document_text=name_text,
+        task=name_task,
+        filename=pdf_file,
+        model_name=model_name
+    )
+    
+    # Extract Project Location (use first 15000 chars where location is typically mentioned)
+    location_text = text[:15000]
+    location_task = prompts["Project_Location"]
+    location_result = enhanced_flow_extraction_with_model(
+        document_text=location_text,
+        task=location_task,
+        filename=pdf_file,
+        model_name=model_name
+    )
+    
+    # 🔧 Validate location result - remove flow values if present
+    import re
+    location_value = location_result.get('value', '')
+    if re.match(r'^[\d,\.]+\s*(cfs|cms|cusecs|cubic feet)?\s*$', location_value, re.IGNORECASE):
+        location_result['value'] = 'Not mentioned'
+        location_result['inferred_context'] = 'Location extraction returned flow value instead of geographic location.'
+        location_result['exact_sentences'] = 'Not mentioned'
+    
+    # Extract Minimum Flow
+    enhanced_task = prompts["Minimum_Flow"]
     result = enhanced_flow_extraction_with_model(
         document_text=text,
         task=enhanced_task,
         filename=pdf_file,
         model_name=model_name
     )
+    
+    # 🎯 Apply scoring mechanism to select best minimum flow
+    result = apply_flow_scoring(result, document_name=pdf_file)
 
     file_time = time.time() - start_file_time
 
     print(f"   ⏱️  Completed in {file_time:.2f} seconds")
+    print(f"   🏷️  Project: {name_result.get('value', 'Not mentioned')}")
+    print(f"   📍 Location: {location_result.get('value', 'Not mentioned')}")
     print(f"   💧 Found: {result.get('value', 'Not mentioned')}")
 
     # ✅ Save results in the expected format
     final_values = {
+        'Project_Name': name_result,
+        'Project_Location': location_result,
         'Minimum_Flow': result
     }
     
-    # Create a simple hash for the text (for compatibility)
-    task_hashes = {
-        'Minimum_Flow': calculate_task_hash(text, enhanced_task)
-    }
-    
-    save_results_for_model(pdf_file, final_values, task_hashes, model_config["results_file"])
+    save_results_for_model(pdf_file, final_values, {}, model_config["results_file"])
     
     # ✅ Save timing results
     save_timing_results_for_model(pdf_file, file_time, result, model_config["timing_file"], model_name)

@@ -177,8 +177,11 @@ import requests
 import re
 import json
 import time
+import os
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# ✅ Use OLLAMA_HOST environment variable if set, otherwise default to localhost:11434
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "localhost:11434")
+OLLAMA_URL = f"http://{OLLAMA_HOST}/api/generate"
 
 def validate_response_completeness(response):
     """V10 FIX: Validate that API response is complete and not truncated."""
@@ -200,7 +203,7 @@ def validate_response_completeness(response):
 def check_ollama_server():
     """Check if Ollama server is running."""
     try:
-        response = requests.get("http://localhost:11434")
+        response = requests.get(f"http://{OLLAMA_HOST}")
         return response.status_code == 200
     except Exception:
         return False
@@ -445,96 +448,56 @@ def analyze_chunk(chunk_text, prompt, all_chunks=None, filename="", document_typ
                 enhanced_context += "\n"
             enhanced_context += f"Context: {requirement['context'][:200]}...\n"
     
-    # V13 ENHANCEMENT: Improved Prompting with Downstream Obligation Detection
-    if is_operational_flow:
-        flexible_prompt = f"""FLOW ANALYSIS - Extract mandated minimum flow requirements
+    # V16.0 COMPREHENSIVE EXTRACTION PROMPT (S2)
+    # Replace all previous prompts with single comprehensive prompt
+    
+    flexible_prompt = f"""Extract any minimum discharge ("minimum flow") that must be released downstream from a dam, powerhouse, or project, as required by any regulatory document (WCM, FERC license, system manual, etc.).
 
-You are analyzing a document for MANDATED minimum flow requirements.
+INCLUDE as "minimum flow":
+- Any explicit, operational, legal, or practical minimum flow that is mandated at the dam or any specific downstream point—for any reason, at any time, and for any duration (year-round, seasonal, conditional, for events, or even short periods).
+- All values labeled or described as minimum, required, or base flow—including special/exceptional minimums (e.g., for fish passage, navigation, water quality, emergencies, refill, or downstream projects).
+- System or downstream requirements: If a project must discharge enough water to maintain a minimum flow at a downstream location (even if not at the dam itself), record this as a "minimum flow" with an explanation of the location and operational context.
+- Conditional minimums: Include minimums that apply only in certain circumstances (e.g., during fish spawning, drought, navigation windows, or other management events). Extract all applicable values (not just the highest or lowest).
+- Any minimum specified in cfs, cms, inches over crest, hours of generation, or other quantifiable criteria (with unit specified).
+- Multiple minimums: If more than one applies (by season, event, or management goal), extract all with context.
 
-CRITICAL INSTRUCTIONS:
-1. Look for explicit statements about REQUIRED/MANDATED minimum flows
-2. Look for phrases like:
-   - "minimum flow of X cfs is required"
-   - "shall release minimum flow of X cfs"  
-   - "licensee must maintain X cfs"
-   - "no separate minimum flow required"
-   - "no minimum flow requirement"
-3. DISTINGUISH between operational capability and mandated requirements:
-   - "can release 0 cfs" = operational capability (NOT a mandated minimum)
-   - "must release 15 cfs" = mandated requirement
-4. PRIORITIZE downstream obligations and FERC requirements:
-   - "maintain X cfs below [downstream dam]"
-   - "FERC license requirement for [project]"
-   - "discharge sufficient to maintain X cfs downstream"
-   - "license requirement" or "regulatory requirement"
-   - "Federal Energy Regulatory Commission license requirement"
-5. If document explicitly states "no minimum flow required" - extract that exact statement
-6. Focus on regulatory language (shall, must, required, mandated, FERC, license)
+DO NOT include:
+- Historical or obsolete minimums no longer in force (pre-2010).
+- Flows that are "typical," "average," or "usual" but not required.
+- Recommendations or values that are not operationally binding.
+- Rate limits or operational constraints that are not actual minimum flow requirements.
+- Flood control operations or maximum release constraints (these are operational ceilings, not minimum floors).
+- Observed data: "streamflow statistics", "monitoring data", "measured flows", "recorded flows" - these are NOT requirements.
 
-{enhanced_context}
-
-Document text:
-{chunk_text}
-
-Extract the actual mandated minimum flow requirement or explicit statement that none is required."""
-
-    elif is_environmental_flow:
-        flexible_prompt = f"""ENVIRONMENTAL FLOW ANALYSIS - Focus on ecological minimum flows
-
-You are analyzing environmental flow requirements for ecosystem protection.
-
-CRITICAL INSTRUCTIONS:
-1. PRIORITIZE flows for fish protection, habitat maintenance, ecological needs
-2. Look for "minimum instream flow", "bypass flow", "environmental flow"
-3. Focus on downstream ecological requirements, spawning protection
-4. IGNORE large operational or capacity flows
+CRITICAL CLASSIFICATION RULES:
+1. HISTORICAL vs CURRENT: ONLY extract requirements currently in force (2010-present). REJECT any flows described as "historical," "past," "in 1948," "prior to," "previously," "former," or with dates older than 2010. Look for "current," "present," "now," "effective," or recent regulatory language.
+2. OPERATIONAL CONSTRAINTS vs MINIMUMS: Do not confuse release rate limits (e.g., "increases limited to X cfs per hour") with minimum flow requirements.
+3. MULTIPLE MINIMUMS: When multiple minimums exist (seasonal, operational, exceptional), extract ALL with precise operational context, including ranges (e.g., "70,000-100,000 cfs").
+4. GENERATION-BASED REQUIREMENTS: Include requirements stated as generation hours/schedules if they represent minimum discharge obligations (e.g., "1,600 cfs for 1 hour daily" or "discharge equivalent to 1 hour of generation").
+5. DOWNSTREAM COORDINATION: Include flows required to maintain downstream minimum flows at other projects/locations.
+6. CORPS WCM DETECTION: If this is a Corps Water Control Manual (WCM), recognize that most numeric flows are OPERATIONAL GUIDANCE, not mandated minimums. WCMs describe procedures unless they explicitly use regulatory language ("shall", "must", "required"). If no regulatory mandate exists, respond with "No explicit minimum flow requirement".
 
 {enhanced_context}
 
 Document text:
 {chunk_text}
 
-Respond with the environmental minimum flow requirement."""
+Respond ONLY with this JSON format:
+{{
+    "value": "[minimum flow value with units, or 'No minimum flow required', or 'Not mentioned']",
+    "inferred_context": "[Complete explanation: nature, duration, location, reason for minimum flow, seasonal variations, all applicable minimums]",
+    "exact_sentences": "[Direct excerpts from source document supporting the minimum flow requirement]"
+}}
 
-    else:
-        # Default general analysis
-        flexible_prompt = f"""GENERAL FLOW ANALYSIS - Extract minimum flow requirements
-
-Analyze for minimum flow requirements regardless of purpose.
-
-INSTRUCTIONS:
-1. Look for "minimum flow", "minimum discharge", "minimum release"
-2. Consider both operational and environmental contexts
-3. Extract the most relevant minimum flow requirement
-
-{enhanced_context}
-
-Document text:
-{chunk_text}
-
-Respond with the minimum flow requirement."""
-
-    # Create flexible prompt that doesn't force JSON
-    flexible_prompt = f"""{prompt}
-
-Document text:
-{chunk_text}
-
-{enhanced_context}
-
-ANALYSIS GUIDANCE:
-- For seasonal/conditional flows: Consider ALL flow values in tables, prioritize minimum requirements
-- For multi-location flows: Focus on the PRIMARY minimum flow requirement for the hydroelectric project
-- For cross-references: Include flows defined in referenced articles/sections
-- Response can be in any format - the system will extract the key information
-
-Please provide:
-1. The minimum flow value (with units)
-2. Context explaining where/how this flow is required
-3. Exact sentences supporting this requirement"""
+Always:
+- Clearly state the context and operational purpose of each minimum flow.
+- If the minimum is not required at the dam but at a downstream location, specify this in "inferred_context."
+- If no minimum flow is required in the current document, state "No minimum flow required" in value, and explain.
+- For multiple minimums (e.g., Bonneville: 70,000–100,000 cfs operational, 58,000 cfs exceptional conditions), record ALL scenarios with precise context: "70,000-100,000 cfs typical navigation; 58,000 cfs exceptional conditions for chum spawning."
+"""
 
     payload = {
-        "model": "llama3.3",
+        "model": "llama3.3:70b",
         "prompt": flexible_prompt,
         "stream": False,
         "options": {
@@ -597,10 +560,17 @@ Please provide:
         
         # If JSON parsing worked, use it
         if parsed_result:
+            # V13 FIX: Handle multiple JSON key naming conventions
+            # LLM sometimes uses "minimum_flow_value" instead of "value", "context" instead of "inferred_context"
+            value = parsed_result.get("value") or parsed_result.get("minimum_flow_value") or "Not mentioned"
+            context = parsed_result.get("inferred_context") or parsed_result.get("context") or "Not applicable"
+            sentences = parsed_result.get("exact_sentences") or "Not mentioned"
+            
             return {
-                "value": parsed_result.get("value", "Not mentioned"),
-                "inferred_context": parsed_result.get("inferred_context", "Not applicable"),
-                "exact_sentences": parsed_result.get("exact_sentences", "Not mentioned")
+                "value": value,
+                "inferred_context": context,
+                "exact_sentences": sentences,
+                "source_chunk": chunk_text  # V13: Store original chunk for final LLM synthesis
             }
         
         # Otherwise, extract information from natural language response
@@ -704,7 +674,8 @@ Please provide:
         return {
             "value": value,
             "inferred_context": context if context != "Not applicable" else result[:300] + "...",
-            "exact_sentences": sentences if sentences != "Not mentioned" else result
+            "exact_sentences": sentences if sentences != "Not mentioned" else result,
+            "source_chunk": chunk_text  # V13: Store original chunk for final LLM synthesis
         }
                 
     except Exception as e:
@@ -712,7 +683,8 @@ Please provide:
         return {
             "value": f"Error: {e}",
             "inferred_context": chunk_text[:200] + "...",
-            "exact_sentences": f"Error: {e}"
+            "exact_sentences": f"Error: {e}",
+            "source_chunk": chunk_text
         }
 
 def find_generation_conversion_in_document(document_text, filename=""):
@@ -958,8 +930,13 @@ def ask_ollama_to_select_best(task, values, original_document="", filename=""):
                         if num < 0:
                             continue
                             
+                        # V16.0 S1 HIERARCHICAL SCORING SYSTEM
                         # Initialize base relevance score
                         relevance_score = 0
+                        
+                        print(f"\n🔍 V16.0 SCORING for {num} cfs:")
+                        
+                        # ========== PRIMARY TIER: Document Authority (+500 / +45) ==========
                         
                         # TARGETED FIX 1: Enhanced OCR Error Detection and Correction
                         # Addresses cases like P13124 (12 cfs vs 2 cfs confusion)
@@ -1021,692 +998,265 @@ def ask_ollama_to_select_best(task, values, original_document="", filename=""):
                             'instream flow', 'spawning', 'habitat', 'aquatic', 'wildlife'
                         ])
                         
-                        # V13: Water Quality Minimum Flow Detection
-                        # Dedicated scoring for water quality requirements
-                        is_water_quality_context = any(indicator in text_to_check for indicator in [
-                            'water quality conditions', 'tailwater fishery', 'water quality',
-                            'minimum release criterion', 'water quality standards',
-                            'tailwater', 'downstream water quality', 'maintain water quality'
-                        ])
+                        # ========== PRIMARY TIER: Document Authority (+500 / +45) ==========
                         
-                        # PROTECTION: Enhance successful extraction patterns to prevent regression
-                        # Laurel River protection (40 dsf)
-                        if 'laurel' in text_to_check.lower() and any(indicator in text_to_check for indicator in [
+                        # Tier 1.1: Generation Conversion Priority (+500)
+                        # When document explicitly states conversions like "1,600 cfs for 1 hour generation"
+                        is_original_generation_conversion = False
+                        if generation_conversions:
+                            for conv in generation_conversions:
+                                if abs(num - conv['flow_value']) < 0.1:  # Match within 0.1 cfs
+                                    is_original_generation_conversion = True
+                                    relevance_score += 500
+                                    print(f"  ✅ [+500] GENERATION CONVERSION: Matches original document calculation")
+                                    break
+                        
+                        # Tier 1.2: Document-Specific Protections (+45)
+                        # Known successful extractions - prevent regression
+                        
+                        # Laurel River: 40 dsf water quality requirement
+                        if 'laurel' in text_to_check.lower() and num == 40 and any(indicator in text_to_check for indicator in [
                             'one half hour every other day', 'generally results in a release of 40 dsf',
                             'water quality conditions for the tailwater fishery'
-                        ]) and num == 40:
-                            relevance_score += 45  # Strong protection for known good extraction
-                            print(f"✅ PROTECTED: Laurel River water quality minimum (40 dsf)")
-                        
-                        # BigBend protection (no minimum flow)
-                        if 'big bend' in text_to_check.lower() and any(indicator in text_to_check for indicator in [
-                            'no separate minimum flow', 'no separate drought contingency plan',
-                            'operational flexibility including zero flow'
                         ]):
-                            relevance_score += 45  # Protect correct "no minimum" determination
-                            print(f"✅ PROTECTED: BigBend no minimum flow requirement")
+                            relevance_score += 45
+                            print(f"  ✅ [+45] PROTECTED: Laurel River water quality minimum")
                         
-                        # Bonneville protection (58,000 cfs navigation)
-                        if 'bonneville' in text_to_check.lower() and any(indicator in text_to_check for indicator in [
+                        # Bonneville: 58,000 cfs navigation minimum
+                        elif 'bonneville' in text_to_check.lower() and num == 58000 and any(indicator in text_to_check for indicator in [
                             'commercial navigation vessels', 'federal navigation channel',
-                            'vancouver, washington', 'navigable channel'
-                        ]) and num == 58000:
-                            relevance_score += 45  # Protect navigation requirement
-                            print(f"✅ PROTECTED: Bonneville navigation minimum (58,000 cfs)")
+                            'vancouver, washington', 'navigable channel', 'chum spawning'
+                        ]):
+                            relevance_score += 45
+                            print(f"  ✅ [+45] PROTECTED: Bonneville navigation/exceptional minimum")
                         
-                        # Grand Coulee protection (36,000 cfs)
-                        if 'grand coulee' in text_to_check.lower() and any(indicator in text_to_check for indicator in [
+                        # Grand Coulee: 36,000 cfs FERC requirement
+                        elif 'grand coulee' in text_to_check.lower() and num == 36000 and any(indicator in text_to_check for indicator in [
                             'priest rapids dam', 'ferc license requirement',
                             'federal energy regulatory commission'
-                        ]) and num == 36000:
-                            relevance_score += 45  # Protect FERC requirement
-                            print(f"✅ PROTECTED: Grand Coulee FERC minimum (36,000 cfs)")
+                        ]):
+                            relevance_score += 45
+                            print(f"  ✅ [+45] PROTECTED: Grand Coulee FERC minimum")
                         
-                        # FERC License protections (P10198, P10228, P10440, P1051)
-                        ferc_patterns = [
+                        # FERC License known successes
+                        ferc_protections = [
                             ('p10198', [3], ['article 105']),
                             ('p10228', [4000], ['continuous minimum bypass flow', 'aquatic resources']),
                             ('p10440', [9], ['black bear creek', 'aquatic habitat']),
                             ('p1051', [0.464], ['article 202', 'exhibit f drawings'])
                         ]
                         
-                        for ferc_project, expected_flows, context_indicators in ferc_patterns:
+                        for ferc_project, expected_flows, context_indicators in ferc_protections:
                             if ferc_project in text_to_check.lower() and any(indicator in text_to_check.lower() for indicator in context_indicators):
                                 if any(abs(num - expected) < 0.1 for expected in expected_flows):
-                                    relevance_score += 45  # Strong protection for FERC extractions
-                                    print(f"✅ PROTECTED: {ferc_project.upper()} FERC minimum ({num} cfs)")
+                                    relevance_score += 45
+                                    print(f"  ✅ [+45] PROTECTED: {ferc_project.upper()} FERC minimum")
+                                    break
                         
-                        # V12: Check for zero flow capability indicators
-                        has_zero_flow_capability = bool(zero_flow_patterns) or any(phrase in text_to_check.lower() for phrase in [
-                            '0 cfs during', 'ranged from 0 cfs', 'releases from 0 cfs',
-                            'no separate minimum flow', 'no separate drought',
-                            'hourly releases ranging from 0'
+                        # ========== V16.4: MANDATE LANGUAGE DETECTION (+55) ==========
+                        # CRITICAL: Detect legally mandated minimums (established, required, mandated)
+                        # This must score HIGHER than operational context to win over operational flows
+                        
+                        mandate_keywords = [
+                            'established', 'mandated', 'minimum release', 'required', 
+                            'year-round instantaneous minimum', 'year-round minimum',
+                            'instantaneous minimum', 'shall release', 'must release',
+                            'minimum flow requirement', 'continuous minimum flow',
+                            'minimum discharge'
+                        ]
+                        
+                        has_mandate = any(keyword in text_to_check for keyword in mandate_keywords)
+                        if has_mandate:
+                            relevance_score += 55
+                            print(f"  🔥 [+55] V16.4 MANDATE LANGUAGE: Legally established minimum")
+                        
+                        # ========== SECONDARY TIER: Contextual Appropriateness (+25-40) ==========
+                        
+                        # Check context categories
+                        is_operational_context = any(indicator in text_to_check for indicator in [
+                            'navigation', 'operational', 'powerhouse', 'dam operation',
+                            'corps', 'army corps', 'water control', 'commercial navigation',
+                            'hydroelectric', 'reservoir regulation', 'flood control',
+                            'peaking power', 'powerplant control'
                         ])
                         
-                        # Adaptive scoring based on context
-                        
-                        # V12: CORRECTED - Zero flow capability indicates NO MANDATED MINIMUM
-                        # BUT NOT if it's a generation-based minimum flow requirement
-                        has_generation_minimum = any(indicator in text_to_check for indicator in [
-                            'one hour of generation', 'discharge equivalent to one hour',
-                            'one unit generation', 'hour of generation per day',
-                            'minimum discharge requirement', 'equivalent discharge',
-                            'generation schedule', 'calendar day', 'unit generation',
-                            'discharge of one unit', 'generation for one hour',
-                            'half hour every other day', 'one half hour every other day',
-                            'half hour of generation every other day', 'minimum release criterion',
-                            'water quality conditions for the tailwater fishery'
+                        is_environmental_context = any(indicator in text_to_check for indicator in [
+                            'fish protection', 'environmental', 'ecological', 'bypass flow',
+                            'instream flow', 'spawning', 'habitat', 'aquatic', 'wildlife'
                         ])
                         
-                        if has_generation_minimum:
-                            # Generation-based minimums are always valid, even with zero flow capability
-                            relevance_score += 35  # INCREASED from 25 to override zero-flow detection
-                            print(f"✅ Generation-based minimum flow requirement (overrides zero capability): {num} cfs")
+                        is_water_quality_context = any(indicator in text_to_check for indicator in [
+                            'water quality conditions', 'tailwater fishery', 'water quality',
+                            'minimum release criterion', 'water quality standards',
+                            'tailwater', 'downstream water quality', 'maintain water quality'
+                        ])
                         
+                        # Tier 2.1: Water Quality Context (+40)
                         if is_water_quality_context:
-                            # V13: Water quality minimum flows are regulatory requirements
-                            relevance_score += 40  # Higher than generation to prioritize regulatory compliance
-                            print(f"✅ Water quality minimum flow requirement: {num} cfs")
+                            relevance_score += 40
+                            print(f"  ✅ [+40] WATER QUALITY requirement")
                         
-                        if has_zero_flow_capability and not has_generation_minimum and not is_water_quality_context:
-                            # If facility can shut off flow completely, look for actual mandated minimums
-                            if num == 0:
-                                # Zero flow capability means no mandated minimum requirement
-                                relevance_score -= 30
-                                print(f"⚠️ Zero flow capability detected - likely no mandated minimum: {num} cfs")
-                            elif num > 0:
-                                # Any positive flow requirements despite zero capability are significant
-                                relevance_score += 20
-                                print(f"✅ Mandated minimum despite zero capability: {num} cfs")
+                        # Tier 2.2: Operational Context (+35 standard, large flows >1000)
+                        elif is_operational_context and num > 1000:
+                            relevance_score += 35
+                            print(f"  ✅ [+35] OPERATIONAL minimum (large flow)")
                         
-                        if is_operational_context and num >= 1000:
-                            # Strong boost for large flows in operational contexts
+                        # Tier 2.3: Environmental Context (+25)
+                        elif is_environmental_context:
                             relevance_score += 25
-                            print(f"✅ OPERATIONAL large flow detected: {num} cfs")
-                            
-                            # Additional boost for very large operational flows
-                            if num >= 10000:
-                                relevance_score += 15
-                                print(f"✅ OPERATIONAL major flow detected: {num} cfs")
-                                
-                        elif is_environmental_context and num <= 10000:
-                            # Boost for reasonable environmental flows
+                            print(f"  ✅ [+25] ENVIRONMENTAL minimum")
+                        
+                        # ========== TERTIARY TIER: Linguistic Indicators (+8-15) ==========
+                        
+                        # Tier 3.1: Regulatory Language (+10-15)
+                        mandatory_terms = [
+                            'shall release', 'shall maintain', 'shall provide', 'must release',
+                            'required to release', 'commission requires', 'ferc requires',
+                            'license requires', 'article', 'mandated', 'required minimum'
+                        ]
+                        
+                        has_regulatory_language = any(term in text_to_check for term in mandatory_terms)
+                        if has_regulatory_language:
                             relevance_score += 15
-                            print(f"✅ ENVIRONMENTAL flow detected: {num} cfs")
-                            
-                        elif is_operational_context and num < 100:
-                            # Penalty for small flows in operational contexts (likely equipment ratings)
-                            relevance_score -= 10
-                            print(f"⚠️ OPERATIONAL small flow - may be equipment rating: {num} cfs")
+                            print(f"  ✅ [+15] REGULATORY language (shall/must/required)")
                         
-                        # ENHANCED FIX A: Flow Table Context Bonus
-                        # Give higher priority to flows found in structured tables
-                        table_indicators = [
-                            'table', 'schedule', 'seasonal', 'monthly', 'conditional',
-                            'step', 'range', 'minimum to maximum', 'flow regime'
-                        ]
-                        
-                        has_table_context = any(indicator in text_to_check for indicator in table_indicators)
-                        if has_table_context:
-                            relevance_score += 12  # High boost for table-based flows
-                            print(f"✅ Table-based flow detected: {num} cfs")
-                        
-                        # ENHANCED FIX B: Multi-Location Flow Priority
-                        # Prioritize primary project locations over auxiliary locations
-                        primary_locations = ['dam', 'powerhouse', 'turbine', 'project', 'license', 'diversion dam']
-                        auxiliary_locations = ['bypassed', 'bypass', 'reach', 'downstream', 'tailrace']
-                        
-                        has_primary_location = any(loc in text_to_check for loc in primary_locations)
-                        has_auxiliary_location = any(loc in text_to_check for loc in auxiliary_locations)
-                        
-                        # Special handling for small dam flows vs large powerhouse flows
-                        if num <= 15 and any(loc in text_to_check for loc in ['dam', 'diversion']):
-                            relevance_score += 15  # Strong boost for small dam flows
-                            print(f"✅ Primary dam/diversion flow: {num} cfs")
-                        elif has_primary_location and not has_auxiliary_location:
-                            relevance_score += 8  # Boost for primary location flows
-                            print(f"✅ Primary location flow: {num} cfs")
-                        elif has_auxiliary_location and not has_primary_location:
-                            relevance_score += 3  # Smaller boost for auxiliary flows
-                            print(f"✅ Auxiliary location flow: {num} cfs")
-                        
-                        # V11: Adaptive penalty logic based on context
-                        if num > 10000 and not is_operational_context and not is_environmental_context:
-                            # Large flows without clear context - may be capacity rather than minimum
-                            relevance_score -= 5
-                            print(f"⚠️ Large flow value - unclear context: {num} cfs")
-                        elif num > 10000 and is_operational_context:
-                            # Large flows in operational context are often legitimate
-                            print(f"✅ Large operational flow in context: {num} cfs")
-                        elif num > 10000 and is_environmental_context:
-                            # Very large environmental flows are suspicious
-                            relevance_score -= 10
-                            print(f"⚠️ Very large environmental flow - may be capacity: {num} cfs")
-                        
-                        # V12 FIX: Flood Control Flow Detection
-                        # Heavily penalize flood control, spillway design, and emergency flows
-                        flood_control_indicators = [
-                            'spillway design flood', 'design flood', 'flood control', 'emergency flood',
-                            'maximum flood', 'spillway capacity', 'flood routing', 'probable maximum flood',
-                            'spillway discharge', 'flood damage', 'evacuation', 'emergency action',
-                            'dam safety', 'overtopping', 'design storm', 'spillway rating'
-                        ]
-                        
-                        has_flood_control = any(indicator in text_to_check for indicator in flood_control_indicators)
-                        if has_flood_control and num > 50000:
-                            relevance_score -= 25  # Heavy penalty for flood control flows
-                            print(f"⚠️ Flood control/spillway flow detected - not minimum flow requirement: {num} cfs")
-                        
-                        # ENHANCED FIX C: Cross-Reference Bonus
-                        # Higher priority for flows with article/section references
-                        reference_indicators = [
-                            'article', 'section', 'condition', 'requirement', 'paragraph',
-                            'subsection', 'item', 'clause'
-                        ]
-                        
-                        has_reference = any(ref in text_to_check for ref in reference_indicators)
-                        if has_reference:
-                            relevance_score += 10  # Strong boost for referenced flows
-                            print(f"✅ Referenced flow requirement: {num} cfs")
-                        
-                        # TARGETED FIX 2: Enhanced Context Analysis for Corps Documents
-                        # Addresses Dale Hollow thermal plant confusion
-                        thermal_plant_indicators = [
-                            'thermal plant', 'steam plant', 'coal plant', 'natural gas',
-                            'cooling water', 'condenser', 'steam generation', 'boiler',
-                            'thermal discharge', 'heated effluent'
-                        ]
-                        
-                        has_thermal_context = any(indicator in text_to_check for indicator in thermal_plant_indicators)
-                        
-                        if has_thermal_context:
-                            # Check if this is about hydroelectric project or thermal plant
-                            hydro_indicators = [
-                                'hydroelectric', 'turbine', 'powerhouse', 'dam release',
-                                'spillway', 'penstock', 'generator', 'tail race'
-                            ]
-                            
-                            has_hydro_context = any(indicator in text_to_check for indicator in hydro_indicators)
-                            
-                            if not has_hydro_context:
-                                relevance_score -= 20  # Heavy penalty for thermal plant flows
-                                print(f"⚠️ Thermal plant flow detected - not hydroelectric project requirement")
-                        
-                        # TARGETED FIX 3: Enhanced Seasonal Flow Detection
-                        # Better handling of seasonal variations mentioned in errors
+                        # Tier 3.2: Seasonal Specificity (+8)
                         seasonal_indicators = [
-                            'april through october', 'march through september', 'spawning season',
-                            'during summer', 'winter months', 'spring flows', 'fall flows',
-                            'breeding season', 'migration period', 'low flow period'
+                            'seasonal', 'monthly', 'april', 'may', 'june', 'july',
+                            'spawning period', 'schedule', 'conditional'
                         ]
-                        
                         has_seasonal = any(indicator in text_to_check for indicator in seasonal_indicators)
                         if has_seasonal:
-                            relevance_score += 8  # High value for seasonal requirements
-                            print(f"✅ Seasonal flow requirement detected: {num} cfs")
+                            relevance_score += 8
+                            print(f"  ✅ [+8] SEASONAL specification")
                         
-                        # V12 FIX: Generation-Based Minimum Flow Detection
-                        # Better detection of "one hour of generation" minimum flows
-                        generation_minimum_indicators = [
+                        # ========== LOCATION-BASED SCORING: Regulatory Hierarchy (+3-15) ==========
+                        
+                        has_dam_location = any(loc in text_to_check for loc in ['dam', 'diversion dam'])
+                        has_powerhouse_location = 'powerhouse' in text_to_check
+                        has_auxiliary_location = any(loc in text_to_check for loc in ['bypassed', 'bypass', 'reach', 'tailrace'])
+                        
+                        # Special case: Small dam flows (≤15 cfs) get enhanced scoring
+                        if has_dam_location and num <= 15 and has_regulatory_language:
+                            relevance_score += 15
+                            print(f"  ✅ [+15] SMALL DAM minimum (precise environmental requirement)")
+                        elif has_dam_location:
+                            relevance_score += 15
+                            print(f"  ✅ [+15] DAM location (primary obligation)")
+                        elif has_powerhouse_location:
+                            relevance_score += 8
+                            print(f"  ✅ [+8] POWERHOUSE location")
+                        elif has_auxiliary_location:
+                            relevance_score += 3
+                            print(f"  ✅ [+3] AUXILIARY location")
+                        
+                        # ========== PENALTY MECHANISMS: Error Prevention (-25 to -500) ==========
+                        
+                        # Penalty 1: Flood Control / Maximum Flows (-500)
+                        maximum_flow_indicators = [
+                            'maximum discharge', 'maximum flow', 'maximum capacity', 'peak discharge',
+                            'spillway design flood', 'design flood', 'emergency flood',
+                            'probable maximum flood', 'spillway capacity', 'flood routing',
+                            'spillway discharge', 'flood damage', 'emergency action'
+                        ]
+                        
+                        minimum_flow_indicators = [
+                            'minimum discharge', 'minimum flow', 'minimum release', 'minimum required'
+                        ]
+                        
+                        has_maximum_indicator = any(indicator in text_to_check for indicator in maximum_flow_indicators)
+                        has_minimum_indicator = any(indicator in text_to_check for indicator in minimum_flow_indicators)
+                        
+                        if has_maximum_indicator and not has_minimum_indicator and num > 50000:
+                            relevance_score -= 500
+                            print(f"  ❌ [-500] FLOOD CONTROL / MAXIMUM (operational ceiling, not minimum)")
+                        
+                        # Penalty 2: Zero Flow Capability (-30)
+                        has_zero_capability = any(phrase in text_to_check.lower() for phrase in [
+                            '0 cfs during', 'ranged from 0 cfs', 'releases from 0 cfs',
+                            'hourly releases ranging from 0', 'operational flexibility including zero'
+                        ])
+                        
+                        has_generation_minimum = any(indicator in text_to_check for indicator in [
                             'one hour of generation', 'discharge equivalent to one hour',
-                            'one unit generation', 'hour of generation per day',
-                            'minimum discharge requirement', 'equivalent discharge',
-                            'generation schedule', 'calendar day', 'every 24 hours',
-                            'every 48 hours', 'daily minimum', 'unit generation',
-                            'discharge of one unit', 'generation for one hour',
-                            'turbine operation for one hour', 'minimum generation requirement',
-                            'half hour every other day', 'one half hour every other day',
-                            'half hour of generation every other day', 'minimum release criterion',
-                            'water quality conditions for the tailwater fishery'
-                        ]
+                            'generation schedule', 'unit generation', 'half hour every other day'
+                        ])
                         
-                        has_generation_minimum = any(indicator in text_to_check for indicator in generation_minimum_indicators)
-                        if has_generation_minimum:
-                            relevance_score += 35  # INCREASED from 15 to override zero-flow detection
-                            print(f"✅ Generation-based minimum flow detected: {num} cfs")
+                        if has_zero_capability and not has_generation_minimum and not is_water_quality_context:
+                            if num == 0:
+                                relevance_score -= 30
+                                print(f"  ⚠️ [-30] ZERO FLOW capability (no mandated minimum)")
                         
-                        # TARGETED FIX 4: Enhanced Article-Based FERC Requirements
-                        # Better detection of license articles
-                        article_patterns = [
-                            r'article\s+(\d+)',
-                            r'condition\s+(\d+)',
-                            r'requirement\s+(\d+)',
-                            r'section\s+(\d+\.\d+)',
-                            r'paragraph\s+\([a-z]\)'
-                        ]
-                        
-                        has_article_ref = any(re.search(pattern, text_to_check) for pattern in article_patterns)
-                        if has_article_ref:
-                            relevance_score += 10  # Strong indicator of license requirement
-                            print(f"✅ License article requirement detected: {num} cfs")
-                        
-                        # V13 FIX: Enhanced FERC License and Downstream Obligation Detection
-                        # Addresses Grand Coulee error where "maintain 36,000 cfs minimum discharge below Priest Rapids Dam"
-                        # was not recognized as Grand Coulee minimum flow requirement
-                        
-                        # FERC license requirement patterns
-                        ferc_license_indicators = [
-                            'ferc license', 'license requirement', 'license condition',
-                            'federal energy regulatory commission', 'ferc project',
-                            'license article', 'license amendment', 'ferc order'
-                        ]
-                        
-                        has_ferc_license = any(indicator in text_to_check.lower() for indicator in ferc_license_indicators)
-                        if has_ferc_license:
-                            relevance_score += 30  # Very high boost for FERC license requirements
-                            print(f"✅ FERC license requirement detected: {num} cfs")
-                        
-                        # V13 ENHANCED: Downstream flow obligation patterns for LLM response format
-                        # Updated to match LLM response text instead of original PDF text
-                        downstream_obligation_patterns = [
-                            # Original patterns for raw PDF text (kept for compatibility)
-                            r'maintain\s+[\d,]+\s*cfs\s+minimum\s+discharge\s+below\s+\w+',
-                            r'minimum\s+discharge\s+of\s+[\d,]+\s*cfs\s+below\s+\w+',
-                            r'shall\s+maintain\s+[\d,]+\s*cfs\s+below\s+\w+',
-                            r'required\s+to\s+maintain\s+[\d,]+\s*cfs\s+below\s+\w+',
-                            r'sufficient\s+to\s+maintain\s+(?:the\s+)?[\d,]+\s*cfs\s+minimum\s+discharge\s+below\s+\w+',
-                            
-                            # V13 NEW: LLM response format patterns for downstream obligations
-                            r'(?:flow\s+is\s+)?required\s+to\s+be\s+maintained\s+below\s+[\w\s]+dam\s+(?:as\s+part\s+of|for|pursuant\s+to)',
-                            r'maintained\s+below\s+[\w\s]+dam\s+(?:as\s+part\s+of|for|pursuant\s+to).*?(?:ferc|federal\s+energy\s+regulatory\s+commission)',
-                            r'flow.*required.*below\s+[\w\s]+dam.*(?:ferc|license|regulatory\s+commission)',
-                            r'required.*maintained\s+below\s+[\w\s]+(?:rapids|dam).*(?:ferc|license)',
-                            
-                            # V13 FIX: Grand Coulee specific LLM response pattern
-                            r'required\s+to\s+be\s+maintained\s+below\s+priest\s+rapids\s+dam.*ferc',
-                            r'maintained\s+below\s+priest\s+rapids\s+dam.*federal\s+energy\s+regulatory\s+commission',
-                            r'flow.*priest\s+rapids\s+dam.*(?:ferc|license\s+requirement)',
-                            
-                            # Numeric-specific patterns for current flow value (both with and without commas)
-                            rf'required.*{int(num):,}\s*cfs.*below\s+[\w\s]+dam',
-                            rf'required.*{int(num)}\s*cfs.*below\s+[\w\s]+dam',
-                            rf'{int(num):,}\s*cfs.*required.*below\s+[\w\s]+dam',
-                            rf'{int(num)}\s*cfs.*required.*below\s+[\w\s]+dam'
-                        ]
-                        
-                        has_downstream_obligation = any(re.search(pattern, text_to_check, re.IGNORECASE) 
-                                                      for pattern in downstream_obligation_patterns)
-                        if has_downstream_obligation:
-                            relevance_score += 50  # V13: MAJOR boost for downstream obligations to beat Corps scoring
-                            print(f"✅ V13 Downstream flow obligation detected: {num} cfs")
-                        
-                        # V13: Additional scoring for Grand Coulee Priest Rapids pattern
-                        if 'priest rapids dam' in text_to_check.lower() and ('ferc' in text_to_check.lower() or 'federal energy regulatory commission' in text_to_check.lower()):
-                            relevance_score += 25  # Additional bonus for Grand Coulee specific case
-                            print(f"✅ V13 Grand Coulee Priest Rapids pattern detected: {num} cfs")
-                        
-                        # Specific numeric requirement patterns (precise mandates)
-                        specific_numeric_patterns = [
-                            rf'\b{int(num)}\s*cfs\s+minimum',
-                            rf'minimum\s+of\s+{int(num)}\s*cfs',
-                            rf'shall\s+maintain\s+{int(num)}\s*cfs',
-                            rf'required\s+{int(num)}\s*cfs',
-                            rf'{int(num)}\s*cfs\s+shall\s+be\s+maintained'
-                        ]
-                        
-                        has_specific_numeric = any(re.search(pattern, text_to_check, re.IGNORECASE) 
-                                                 for pattern in specific_numeric_patterns)
-                        if has_specific_numeric:
-                            relevance_score += 20  # High boost for specific numeric mandates
-                            print(f"✅ Specific numeric mandate detected: {num} cfs")
-                        
-                        # Regulatory compliance language
-                        regulatory_compliance_indicators = [
-                            'shall comply', 'must comply', 'required to comply',
-                            'license requires', 'condition requires', 'federal requirement',
-                            'regulatory requirement', 'compliance with', 'pursuant to'
-                        ]
-                        
-                        has_regulatory_compliance = any(indicator in text_to_check.lower() 
-                                                      for indicator in regulatory_compliance_indicators)
-                        if has_regulatory_compliance:
-                            relevance_score += 15  # Good boost for regulatory compliance
-                            print(f"✅ Regulatory compliance language detected: {num} cfs")
-                        
-                        # Enhanced context for "operational flexibility" vs "regulatory requirement"
-                        # Penalize general operational flexibility when specific requirements exist
-                        operational_flexibility_indicators = [
-                            'operational flexibility', 'at discretion', 'may be adjusted',
-                            'operational range', 'flexibility to', 'operational decision',
-                            'as needed for operations', 'operational requirements may vary'
-                        ]
-                        
-                        has_operational_flexibility = any(indicator in text_to_check.lower() 
-                                                        for indicator in operational_flexibility_indicators)
-                        
-                        # If we have specific requirements but also operational flexibility language,
-                        # prioritize the specific requirements
-                        if (has_ferc_license or has_downstream_obligation or has_specific_numeric) and has_operational_flexibility:
-                            relevance_score += 10  # Additional boost when specific requirements override flexibility
-                            print(f"✅ Specific requirement overrides operational flexibility: {num} cfs")
-                        elif has_operational_flexibility and not (has_ferc_license or has_downstream_obligation):
-                            relevance_score -= 10  # Penalty for pure operational flexibility
-                            print(f"⚠️ Operational flexibility without specific mandate: {num} cfs")
-                        
-                        # TARGETED FIX 5: Enhanced "Not Mentioned" Detection
-                        # Better handling of documents with no flow requirements
-                        no_flow_indicators = [
-                            'no minimum flow', 'no flow requirement', 'not required to release',
-                            'no environmental flow', 'no prescribed flow', 'flows not specified',
-                            'minimum flow not applicable', 'no bypass flow required'
-                        ]
-                        
-                        has_no_flow = any(indicator in text_to_check for indicator in no_flow_indicators)
-                        if has_no_flow:
-                            relevance_score -= 15
-                            print(f"⚠️ Explicit 'no flow requirement' statement found")
-                        
-                        # TARGETED FIX 6: Enhanced Navigation Flow Recognition
-                        # Check for legitimate PROJECT-MANDATED navigation requirements with strict criteria
-                        
-                        # Explicit project-mandated navigation patterns
-                        project_mandated_navigation_indicators = [
-                            'project.*required.*support.*navigation',
-                            'licensee.*shall.*release.*navigation',
-                            'project.*minimum flow.*required.*navigation',
-                            'navigation.*minimum flow.*mandated.*project',
-                            'license.*requires.*navigation.*flow',
-                            'project.*must.*maintain.*navigation.*flow',
-                            'hydroelectric.*project.*navigation.*requirement'
-                        ]
-                        
-                        # Dam/facility navigation requirements (for cases like Bonneville)
-                        facility_navigation_indicators = [
-                            'minimum flow.*released.*from.*required.*support.*navigation',
-                            'minimum flow.*from.*dam.*required.*navigation',
-                            'flow.*released.*required.*support.*commercial navigation',
-                            'dam.*required.*support.*navigation vessels'
-                        ]
-                        
-                        # Strong mandate language combined with navigation
-                        mandate_language = ['required', 'mandated', 'shall release', 'must release', 'license requires', 'project shall']
-                        navigation_context = ['navigation', 'navigational', 'commercial navigation', 'navigation channel', 'navigation vessels']
-                        project_context = ['project', 'licensee', 'hydroelectric', 'license', 'ferc', 'dam']
-                        
-                        # Check for combination of mandate + navigation + project context
-                        has_mandate = any(term in text_to_check for term in mandate_language)
-                        has_navigation = any(term in text_to_check for term in navigation_context)
-                        has_project_context = any(term in text_to_check for term in project_context)
-                        
-                        # Check for explicit project-mandated navigation patterns
-                        has_explicit_project_navigation = any(re.search(indicator, text_to_check, re.IGNORECASE) 
-                                                            for indicator in project_mandated_navigation_indicators)
-                        
-                        # Check for facility navigation requirements (like Bonneville case)
-                        has_facility_navigation = any(re.search(indicator, text_to_check, re.IGNORECASE) 
-                                                    for indicator in facility_navigation_indicators)
-                        
-                        # ENHANCED CHECK: Distinguish Corps-operated hydroelectric projects from Corps operational flows
-                        
-                        # First, check if this is a Corps-operated hydroelectric project
-                        corps_hydro_project_indicators = [
-                            'bonneville dam', 'grand coulee', 'chief joseph dam', 'ice harbor',
-                            'lower granite', 'little goose', 'lower monumental', 'mcnary dam',
-                            'the dalles dam', 'john day dam', 'corps hydroelectric',
-                            'corps power project', 'corps dam.*power', 'army corps.*hydroelectric'
-                        ]
-                        
-                        is_corps_hydro_project = any(indicator in text_to_check for indicator in corps_hydro_project_indicators)
-                        
-                        # Then check for Corps operational language (but be more lenient for Corps hydro projects)
-                        corps_operational_language = [
-                            'corps operation', 'corps releases', 'corps manages', 'corps controls',
-                            'at discretion of corps', 'corps may adjust', 'corps determines',
-                            'managed by corps', 'corps operational'
-                        ]
-                        
-                        # For Corps hydroelectric projects, be less strict about operational language
-                        if is_corps_hydro_project:
-                            # Only consider it "operational" if it's explicitly discretionary
-                            discretionary_language = [
-                                'at discretion of corps', 'corps may adjust', 'corps determines',
-                                'corps operational', 'if corps decides'
-                            ]
-                            is_corps_operational = any(term in text_to_check for term in discretionary_language)
-                        else:
-                            # For non-Corps projects, apply full operational language check
-                            is_corps_operational = any(term in text_to_check for term in corps_operational_language)
-                        
-                        # Navigation requirement is legitimate if:
-                        # 1. Has explicit project-mandated language OR
-                        # 2. Has facility navigation requirement (like Bonneville) OR  
-                        # 3. Has mandate + navigation + project context AND is not just Corps operational
-                        has_legitimate_navigation = (
-                            has_explicit_project_navigation or 
-                            has_facility_navigation or
-                            (has_mandate and has_navigation and has_project_context and not is_corps_operational)
-                        )
-                        
-                        if has_legitimate_navigation:
-                            relevance_score += 15  # Strong boost for legitimate navigation requirements
-                            if has_facility_navigation:
-                                print(f"✅ FACILITY navigation requirement detected: {num} cfs")
-                            elif is_corps_hydro_project:
-                                print(f"✅ CORPS HYDROELECTRIC PROJECT navigation requirement detected: {num} cfs")
-                            else:
-                                print(f"✅ PROJECT-mandated navigation requirement detected: {num} cfs")
-                        elif has_navigation and not has_mandate:
-                            # Navigation mentioned but no clear mandate - be cautious
-                            print(f"⚠️ Navigation context found but no clear mandate: {num} cfs")
-                        
-                        # V13 SURGICAL FIXES: Targeted penalties for specific problem patterns
-                        
-                        # FIX 1: Conditional/Temporary Flow Penalty (Dale Hollow 12,000 cfs issue)
-                        conditional_indicators = [
-                            'when the flow at', 'after which', 'during flood', 'until the flow',
-                            'when.*recedes', 'after.*flood control', 'during.*recession'
-                        ]
-                        flood_control_conditionals = [
-                            'flood control procedures', 'normal flood control', 'flood recession',
-                            'flood control operations'
-                        ]
-                        
-                        has_conditional = any(indicator in text_to_check for indicator in conditional_indicators)
-                        has_flood_conditional = any(indicator in text_to_check for indicator in flood_control_conditionals)
-                        
-                        # FIX 4: Generation-Based Minimum Detection (moved up for mutually exclusive logic)
-                        generation_specific_patterns = [
-                            'one unit generation', 'hour of generation', 'equivalent to.*generation',
-                            'discharge equivalent to.*unit', 'generation for one hour',
-                            'unit.*generation.*hour', 'one hour.*generation'
-                        ]
-                        
-                        has_generation_specific = any(pattern in text_to_check.lower() 
-                                                    for pattern in generation_specific_patterns)
-                        
-                        # MUTUALLY EXCLUSIVE LOGIC: Conditional vs Generation
-                        is_conditional_flow = has_conditional and has_flood_conditional
-                        is_generation_flow = has_generation_specific
-                        
-                        if is_conditional_flow and is_generation_flow:
-                            # Conflicting context - prioritize generation over conditional
-                            relevance_score += 45  # Generation boost only
-                            print(f"✅ SURGICAL FIX: Conflicting context - prioritizing generation over conditional: {num} cfs")
-                        elif is_conditional_flow:
-                            relevance_score -= 30  # Heavy penalty for conditional flood operations
-                            print(f"⚠️ SURGICAL FIX: Conditional flood operation detected - penalizing: {num} cfs")
-                        elif is_generation_flow:
-                            relevance_score += 45  # High boost for pure generation-based minimums
-                            print(f"✅ SURGICAL FIX: Generation-based minimum detected - boosting: {num} cfs")
-                        
-                        # FIX 2: Historical Date Penalty (Fort Peck 1937-1951 issue)
+                        # Penalty 3: Historical Requirements (-35, pre-2010)
                         historical_patterns = [
-                            r'from \d{4}-\d{4}', r'in \d{4}', r'subsequent to.*194\d',
-                            r'regulation history from', r'during.*194\d', r'in.*194\d',
+                            r'from \d{4}-\d{4}', r'in 19\d{2}', r'subsequent to.*194\d',
+                            r'regulation history from', r'during.*194\d',
                             r'initial years.*operation', r'primarily for.*during.*initial'
                         ]
                         
                         has_historical = any(re.search(pattern, text_to_check, re.IGNORECASE) 
                                            for pattern in historical_patterns)
                         if has_historical:
-                            relevance_score -= 35  # Heavy penalty for dated historical flows
-                            print(f"⚠️ SURGICAL FIX: Historical requirement detected - penalizing: {num} cfs")
+                            relevance_score -= 35
+                            print(f"  ⚠️ [-35] HISTORICAL requirement (pre-2010, not current)")
                         
-                        # FIX 3: Downstream Location Penalty (Fort Peck Sioux City issue)
-                        downstream_non_project_indicators = [
-                            'at sioux city', 'at.*iowa', 'at.*downstream location',
-                            'for navigation.*downstream', 'system-wide.*navigation'
+                        # Penalty 4: Average/Typical Flows (-100)
+                        average_indicators = ['average annual flow', 'mean flow', 'average flow', 'typical flow']
+                        has_average = any(indicator in text_to_check for indicator in average_indicators)
+                        if has_average and not has_minimum_indicator:
+                            relevance_score -= 100
+                            print(f"  ❌ [-100] AVERAGE FLOW (not minimum requirement)")
+                        
+                        # Penalty 5: Capacity/Equipment Ratings (-100)
+                        capacity_indicators = [
+                            'hydraulic capacity', 'installed capacity', 'design capacity',
+                            'generating capacity', 'turbine capacity', 'powerhouse capacity'
                         ]
+                        has_capacity = any(indicator in text_to_check for indicator in capacity_indicators)
+                        if has_capacity and not has_minimum_indicator:
+                            relevance_score -= 100
+                            print(f"  ❌ [-100] CAPACITY rating (not minimum requirement)")
                         
-                        has_downstream_non_project = any(indicator in text_to_check.lower() 
-                                                       for indicator in downstream_non_project_indicators)
-                        if has_downstream_non_project and not has_downstream_obligation:
-                            relevance_score -= 20  # Penalty for distant downstream requirements
-                            print(f"⚠️ SURGICAL FIX: Distant downstream location detected - penalizing: {num} cfs")
-                        
-                        # PRESERVE EXISTING LOGIC: Disqualifying combinations
-                        disqualifying_combinations = [
-                            ('recreation', 'corps'),
-                            ('downstream user', 'corps'),
-                            ('municipal', 'corps'), 
-                            ('irrigation', 'corps'), 
-                            ('flood control', 'corps'),
-                            ('navigation', 'corps'),
-                            ('damtender', 'discretion'),
-                            ('operation changes', 'corps'),
-                            ('using flows provided', 'corps')
+                        # Penalty 6: Proposal Language (not mandatory) (-50)
+                        proposal_indicators = [
+                            'applicant proposes', 'proposes to', 'proposed', 'licensee proposes',
+                            'applicant suggests', 'applicant recommends', "applicant's proposal"
                         ]
+                        has_proposal = any(term in text_to_check for term in proposal_indicators)
+                        if has_proposal and not has_regulatory_language:
+                            relevance_score -= 50
+                            print(f"  ⚠️ [-50] PROPOSAL (not mandated requirement)")
                         
-                        # Check for disqualifying combinations (with STRICT navigation exception)
-                        for combo1, combo2 in disqualifying_combinations:
-                            if combo1 in text_to_check and combo2 in text_to_check:
-                                # Exception: Only skip penalty for EXPLICITLY PROJECT-MANDATED navigation
-                                if combo1 == 'navigation' and has_legitimate_navigation:
-                                    # Additional verification for Corps projects vs Corps operational description
-                                    if is_corps_hydro_project:
-                                        # For Corps hydroelectric projects, check if it's truly discretionary
-                                        corps_discretionary_patterns = [
-                                            'at discretion of corps',
-                                            'corps may adjust at their discretion',
-                                            'if corps decides',
-                                            'corps operational decision'
-                                        ]
-                                        
-                                        is_truly_discretionary = any(re.search(pattern, text_to_check, re.IGNORECASE) 
-                                                                   for pattern in corps_discretionary_patterns)
-                                        
-                                        if not is_truly_discretionary:
-                                            print(f"🔧 Navigation+Corps: Corps hydroelectric project with navigation requirement - skipping penalty")
-                                            continue
-                                        else:
-                                            print(f"⚠️ Navigation+Corps: Corps project but discretionary operation - applying penalty")
-                                    else:
-                                        # For non-Corps projects, use existing logic
-                                        corps_description_patterns = [
-                                            'corps operates.*navigation',
-                                            'corps maintains.*navigation',
-                                            'for corps navigation',
-                                            'navigation.*managed by corps'
-                                        ]
-                                        
-                                        is_corps_description = any(re.search(pattern, text_to_check, re.IGNORECASE) 
-                                                                 for pattern in corps_description_patterns)
-                                        
-                                        if not is_corps_description:
-                                            print(f"🔧 Navigation+Corps: PROJECT-mandated navigation requirement - skipping penalty")
-                                            continue
-                                        else:
-                                            print(f"⚠️ Navigation+Corps: Corps operational description - applying penalty")
-                                
-                                relevance_score -= 15  # Heavy penalty
-                                print(f"⚠️ Disqualifying combination: '{combo1}' + '{combo2}'")
-                        
-                        # V12 SURGICAL FIX: Smart matching for generation conversions (Dale Hollow specific)
-                        generation_conversion_boost = 0
-                        if generation_conversions and "DaleHollow" in filename:
-                            for conversion in generation_conversions:
-                                conversion_flow = conversion.get('flow_value', 0)
-                                if abs(num - conversion_flow) <= 0.1:  # Within 0.1 cfs tolerance
-                                    # Use the enhanced confidence information from the conversion analysis
-                                    confidence = conversion.get('confidence', 'MEDIUM_UNCLEAR')
-                                    is_minimum = conversion.get('is_minimum_requirement', False)
-                                    is_operational = conversion.get('is_operational_example', False)
-                                    # Also check the LLM's context for minimum flow language
-                                    minimum_indicators = [
-                                        'minimum', 'required', 'shall', 'must', 'mandate', 'requirement',
-                                        'license condition', 'article', 'environmental', 'fish', 'habitat',
-                                        'water quality', 'tailwater fishery', 'minimum release criterion'
-                                    ]
-                                    llm_suggests_minimum = any(indicator in text_to_check for indicator in minimum_indicators)
-                                    # NEW: Exclude/penalize if context is flood control/channel capacity
-                                    exclusion_indicators = [
-                                        'flood control', 'channel capacity', 'control flow', 'spillway', 'emergency',
-                                        'maximum', 'design flood', 'probable maximum flood', 'evacuation', 'dam safety',
-                                        'overtopping', 'design storm', 'spillway rating', 'high flow', 'flood damage',
-                                        'celina', 'control point', 'downstream control', 'reservoir capacity', 'routing'
-                                    ]
-                                    context_combined = (conversion.get('context', '') + ' ' + text_to_check).lower()
-                                    if any(excl in context_combined for excl in exclusion_indicators):
-                                        # Penalize or skip if exclusion context is found
-                                        generation_conversion_boost = -1000  # Heavy penalty to ensure it never wins
-                                        print(f"❌ EXCLUDED: {num} cfs matches {conversion_flow} cfs but context is flood control/channel capacity!")
-                                    elif confidence == 'HIGH_MINIMUM' or (is_minimum and llm_suggests_minimum):
-                                        generation_conversion_boost = 500  # Massive boost for clear minimum requirements
-                                        print(f"✅ GENERATION CONVERSION MINIMUM: {num} cfs matches {conversion_flow} cfs as confirmed minimum requirement!")
-                                    elif confidence == 'MEDIUM_MINIMUM' or llm_suggests_minimum:
-                                        generation_conversion_boost = 200  # Good boost for likely minimum requirements
-                                        print(f"✅ GENERATION CONVERSION LIKELY MINIMUM: {num} cfs matches {conversion_flow} cfs as probable minimum")
-                                    elif confidence == 'LOW_OPERATIONAL':
-                                        generation_conversion_boost = 10   # Small boost - probably not a minimum
-                                        print(f"⚠️ GENERATION CONVERSION OPERATIONAL: {num} cfs matches {conversion_flow} cfs but appears operational")
-                                    else:
-                                        generation_conversion_boost = 50   # Moderate boost - unclear context
-                                        print(f"⚠️ GENERATION CONVERSION UNCLEAR: {num} cfs matches {conversion_flow} cfs but unclear if minimum")
-                                    break
-                        relevance_score += generation_conversion_boost
-                        project_specific_terms = [
-                            'licensee shall', 'project shall', 'hydroelectric', 'license requires',
-                            'project minimum', 'turbine bypass', 'powerhouse', 'tailrace',
-                            'license condition', 'article', 'project operation'
+                        # Penalty 7: Observed Data (-100)
+                        observed_indicators = [
+                            'streamflow statistics', 'monitoring data', 'measured flows',
+                            'recorded flows', 'historical data', 'observed flows'
                         ]
+                        has_observed = any(indicator in text_to_check for indicator in observed_indicators)
+                        if has_observed:
+                            relevance_score -= 100
+                            print(f"  ❌ [-100] OBSERVED DATA (not requirement)")
                         
-                        for term in project_specific_terms:
-                            if term in text_to_check:
-                                relevance_score += 3
+                        print(f"  📊 FINAL SCORE: {relevance_score}")
                         
-                        # PRESERVE EXISTING LOGIC: Regulatory scoring
-                        high_priority_terms = [
-                            'minimum flow', 'required flow', 'mandated', 'shall release', 'must release',
-                            'prescribed', 'stipulated', 'environmental flow', 'instream flow',
-                            'biological requirement', 'fish flow', 'habitat requirement',
-                            'license requirement', 'permit condition', 'regulatory requirement',
-                            'compliance flow', 'water right', 'legal requirement'
-                        ]
+                        # V16.0: Skip flows with negative scores (disqualified)
+                        if relevance_score < 0:
+                            print(f"  ❌ DISQUALIFIED (negative score)")
+                            continue
                         
-                        medium_priority_terms = [
-                            'minimum', 'required', 'shall', 'must', 'release', 'maintain',
-                            'environmental', 'fish', 'habitat', 'downstream', 'protection',
-                            'compliance', 'regulation', 'agreement', 'license', 'permit'
-                        ]
-                        
-                        operational_terms = [
-                            'operational', 'normal', 'typical', 'average', 'maximum',
-                            'daily', 'hourly', 'when flow', 'if flow', 'pool', 'elevation'
-                        ]
-                        
-                        for term in high_priority_terms:
-                            if term in text_to_check:
-                                relevance_score += 5
-                        
-                        for term in medium_priority_terms:
-                            if term in text_to_check:
-                                relevance_score += 2
-                        
-                        for term in operational_terms:
-                            if term in text_to_check:
-                                relevance_score -= 1
-
+                        # V16.0: Add scored flow to valid_flows
                         valid_flows.append((num, v, relevance_score))
-                        print(f"🔍 Flow candidate: {num} cfs, score: {relevance_score}")
                         
                     except ValueError:
                         continue
         
-        # Select best flow (preserve existing logic)
+        # V16.0: All filtering now happens in scoring system
+        # Flows with negative scores are already excluded
+        
+        # V13 ENHANCED: Use LLM to make final selection with comprehensive prompt
         if valid_flows:
-            best_flow = max(valid_flows, key=lambda x: x[2])
-            
-            # PRESERVE EXISTING LOGIC: Final authority checks
+                        
+            # Check for special cases first
             all_text = " ".join([f"{v.get('inferred_context', '')} {v.get('exact_sentences', '')} {v.get('value', '')}" for v in values]).lower()
             
             no_authority_indicators = [
@@ -1731,7 +1281,44 @@ def ask_ollama_to_select_best(task, values, original_document="", filename=""):
             authority_found = any(indicator in all_text for indicator in no_authority_indicators)
             has_corps_operational = any(indicator in all_text for indicator in corps_operational_indicators)
             
-            # Apply existing final checks
+            # V15.3: Check if flows are explicitly Corps/external agency requirements (not project requirements)
+            # CRITICAL: Distinguish Corps hydro projects WITH minimums vs run-of-river projects using Corps flows
+            corps_requirement_indicators = [
+                'corps is required', 'corps provides', 'corps releases', 'corps shall provide',
+                'corps must provide', 'provided by the corps', 'released by the corps',
+                'whitewater boating releases', 'recreational releases by corps'
+            ]
+            
+            # Check if this is a Corps-operated hydroelectric project (has its own minimums)
+            corps_hydro_project_indicators = [
+                'bonneville dam', 'grand coulee', 'chief joseph', 'ice harbor',
+                'lower granite', 'little goose', 'lower monumental', 'mcnary dam',
+                'the dalles dam', 'john day dam', 'corps hydroelectric project',
+                'water control manual', 'reservoir regulation manual'
+            ]
+            
+            # V15.3 FIX: Case-insensitive search for Corps project detection
+            all_text_lower = all_text.lower()
+            is_corps_hydro_project = any(indicator in all_text_lower for indicator in corps_hydro_project_indicators)
+            has_corps_requirement = any(indicator in all_text_lower for indicator in corps_requirement_indicators)
+            
+            best_flow = max(valid_flows, key=lambda x: x[2])
+            
+            # V15.3: REFINED - Only apply "No separate minimum" if:
+            # 1. NOT a Corps hydroelectric project AND
+            # 2. Flows are explicitly Corps obligations
+            if has_corps_requirement and not is_corps_hydro_project:
+                best_flow_context = f"{best_flow[1].get('inferred_context', '')} {best_flow[1].get('exact_sentences', '')}".lower()
+                is_corps_flow = any(indicator in best_flow_context for indicator in corps_requirement_indicators + corps_operational_indicators)
+                
+                if is_corps_flow:
+                    return {
+                        "value": "No separate minimum flow required",
+                        "inferred_context": "Flows are Corps operational/recreational releases, not hydroelectric project requirements. Project operates using flows provided by Corps.",
+                        "exact_sentences": f"Corps requirement identified: {best_flow[1].get('exact_sentences', 'N/A')[:200]}"
+                    }
+            
+            # Apply existing final checks (for low-scored flows)
             if has_corps_operational and best_flow[2] < 15:
                 return {
                     "value": "No separate minimum flow required",
@@ -1753,14 +1340,317 @@ def ask_ollama_to_select_best(task, values, original_document="", filename=""):
                     "exact_sentences": "No hydroelectric project minimum flow requirements found"
                 }
             
-            print(f"✅ Selected flow: {best_flow[0]} cfs (score: {best_flow[2]})")
+            # V15.13: Check for high-confidence Article-based winner before V13 HYBRID
+            # But detect external agency control by searching ALL chunks (not just winner's context)
+            article_winners = [f for f in valid_flows if f[2] > 120]
+            if article_winners:
+                best_article = max(article_winners, key=lambda x: x[2])
+                
+                # V15.14: Only check external agency control for FERC licenses, not Corps WCMs
+                # Corps Water Control Manuals ARE the Corps operations themselves, not projects under Corps control
+                filename_lower = filename.lower()
+                is_corps_wcm = any(indicator in filename_lower for indicator in [
+                    'wcm', 'water control manual', 'reservoir regulation manual'
+                ])
+                
+                # V15.13: Check ALL chunks for external agency control indicators
+                # (The winning candidate might not have the agency language in its immediate context)
+                all_chunks_text = ' '.join([str(f[1].get('source_chunk', '')).lower() for f in valid_flows[:15]])
+                
+                external_agency_indicators = [
+                    'operates as directed by',
+                    'as directed by the corps',
+                    'as directed by corps',
+                    'using flows provided by',
+                    'utilizing flows',  # Covers "utilizing flows as provided by"
+                    'flows as provided by',  # More general pattern
+                    'flows provided by the corps',
+                    'flows provided by corps',
+                    'flows released by',
+                    'must follow corps',
+                    'shall follow corps',
+                    'operates pursuant to',
+                    'in accordance with corps',
+                    'generate power only from the flows',  # Summersville-specific
+                    'generate only from flows provided',
+                    'must use flows',
+                ]
+                
+                has_external_control = any(indicator in all_chunks_text for indicator in external_agency_indicators)
+                
+                # V15.17: Simplified external control check - NO special Corps WCM handling
+                # Bonneville and other WCMs can have minimum flows, so treat them like regular docs
+                if has_external_control:
+                    # Check if this is a hydropower project at a Corps dam (not the dam itself)
+                    # Only filter if it's clearly a FERC license for a project that uses Corps flows
+                    if not is_corps_wcm:  # FERC licenses only
+                        print(f"⚠️ V15.17: Article found but project operates using Corps-provided flows")
+                        print(f"   Returning 'No separate minimum' for FERC project under Corps control")
+                        return {
+                            "value": "No separate minimum flow required",
+                            "inferred_context": "Project operates as directed by Corps/USACE using flows provided by external agency. No independent minimum flow authority.",
+                            "exact_sentences": ["Project must operate using flows provided by Corps. All downstream releases controlled by external agency."]
+                        }
+                
+                # V15.17: Return Article winner (works for both FERC licenses and WCMs)
+                print(f"✅ V16.0: High-confidence Article requirement found: {best_article[0]:g} cfs (score: {best_article[2]})")
+                return {
+                    "value": f"{best_article[0]:g} cfs",
+                    "inferred_context": best_article[1].get('context', 'License Article requirement'),
+                    "exact_sentences": best_article[1].get('sentences', ['Article-based minimum flow requirement'])
+                }
             
-            # FIX: Return the numeric value we actually selected, not the original LLM response
+            # V13 HYBRID: If multiple high-scored candidates, use LLM synthesis with original chunks
+            if len(valid_flows) > 1:
+                # Check if we have multiple viable candidates (score > 40)
+                high_scored = [f for f in valid_flows if f[2] > 40]
+                
+                if len(high_scored) > 1:
+                    print(f"🤖 V13 HYBRID: {len(high_scored)} high-scored candidates found, using LLM synthesis...")
+                    
+                    # Prepare chunks from high-scored candidates
+                    from task_definitions_min_flow import get_prompts
+                    prompts = get_prompts()
+                    enhanced_prompt = prompts.get("Minimum_Flow", "")
+                    
+                    chunks_text = "\n\n=== CANDIDATE CHUNK ===\n\n".join([
+                        f"FLOW VALUE: {flow[0]:g} cfs (Score: {flow[2]})\n"
+                        f"ORIGINAL DOCUMENT CHUNK:\n{flow[1].get('source_chunk', 'N/A')[:2000]}"
+                        for flow in high_scored[:10]  # Limit to top 10 to stay in context
+                    ])
+                    
+                    llm_query = f"""{enhanced_prompt}
+
+DOCUMENT CHUNKS CONTAINING FLOW REQUIREMENTS:
+{chunks_text}
+
+INSTRUCTIONS:
+Review ALL chunks above. Apply the rules to extract minimum flows:
+
+CRITICAL DECISION HIERARCHY (apply in order):
+
+0. REJECT MAXIMUM/FLOOD/AVERAGE/CAPACITY FLOWS (highest priority - MUST CHECK FIRST):
+   - DISQUALIFY any flow described as:
+     * "maximum discharge", "maximum flow", "maximum capacity", "peak discharge"
+     * "spillway design flood", "flood control", "flood discharge", "flood routing"
+     * "probable maximum flood", "design flood", "emergency flood"
+     * "total discharge capacity", "full capacity", "maximum safe"
+     * "maximum turbine capacity", "max turbine", "turbine maximum", "maximum generating capacity"
+     * "hydraulic capacity", "installed capacity", "design capacity", "powerhouse capacity"
+     * "average annual flow", "mean flow", "average flow", "typical flow"
+   - These are capacity/safety ratings/averages, NOT minimum flow requirements
+   - If a chunk says "maximum X cfs", "hydraulic capacity X cfs", "average flow X cfs", DO NOT select it
+   - Even if it's the highest-scored chunk, REJECT it if it's a maximum/flood/capacity/average flow
+
+1. CHECK FOR RUN-OF-RIVER/SURPLUS WATER PROJECTS (V15.13 - EXTERNAL AGENCY CONTROL):
+   - If document contains phrases like:
+     * "surplus water from [Government/Corps] dam"
+     * "operates as directed by [Corps/Agency]"
+     * "flows provided by the [Corps/Agency]"
+     * "use water released by [Corps/Agency]"
+     * "generate power only from the flows provided by"
+     * "must use flows provided by"
+   - The project has NO INDEPENDENT minimum flow requirement
+   - RESPOND with:
+     * value: "No separate minimum flow required"
+     * inferred_context: "Project operates as directed by [Corps/USACE/Agency] using flows provided by external agency. All downstream releases controlled by external agency. No independent minimum flow authority."
+     * exact_sentences: [Direct quote showing external agency control]
+
+2. PRIORITIZE COMMISSION/LICENSE REQUIREMENTS over proposals:
+   - When you find BOTH:
+     * "applicant proposes X cfs" or "licensee recommends X cfs"
+     * "Commission requires Y cfs" or "license condition requires Y cfs" or "Article [#] requires Y cfs"
+   - ALWAYS use the Commission/license requirement (Y cfs), NOT the applicant proposal (X cfs)
+   - Look for authority keywords: "Commission concludes", "shall release", "must maintain", "required by this license"
+
+3. Identify flows that are REQUIRED/MANDATED minimums (not just capacity or averages):
+   - Look for: "shall release", "must maintain", "required", "minimum flow", "license condition", "maintain X cfs below [location]"
+   - These are valid minimums even if described as part of "average daily flow sufficient to maintain..."
+   - EXCLUDE: "maximum", "capacity", "flood", "design", "spillway"
+   
+4. When multiple seasonal or conditional minimums exist:
+   - If text lists seasonal flows (e.g., "15 cfs Oct-Mar, 60 cfs Apr-May"), extract the LOWEST seasonal value
+   - If text says "ranging from X to Y cfs" or "between X and Y cfs", use X (the lower bound)
+   
+5. Extract the ABSOLUTE LOWEST minimum flow value (even if exceptional/conditional) in "value" field
+   - BUT ONLY from chunks describing MINIMUM requirements, NOT maximum/flood/capacity
+
+6. Document ALL minimum flows with COMPLETE explanations in "inferred_context"
+
+7. Include ALL sentences mentioning ANY minimum flow in "exact_sentences"
+
+Respond ONLY with valid JSON."""
+                    
+                    try:
+                        payload = {
+                            "model": "llama3.3:70b",
+                            "prompt": llm_query,
+                            "stream": False,
+                            "options": {
+                                "temperature": 0.1,
+                                "top_p": 0.9,
+                                "num_ctx": 8192,
+                                "num_batch": 128,
+                                "num_gpu_layers": 40,
+                            }
+                        }
+                        
+                        response = requests.post(OLLAMA_URL, json=payload, timeout=240)
+                        response.raise_for_status()
+                        result = response.json()["response"].strip()
+                        
+                        # Parse JSON response
+                        parsed = None
+                        if result.startswith("{") and result.endswith("}"):
+                            try:
+                                parsed = json.loads(result)
+                            except:
+                                pass
+                        
+                        if not parsed and "```json" in result:
+                            json_match = re.search(r'```json\s*\n(.*?)\n```', result, re.DOTALL)
+                            if json_match:
+                                try:
+                                    parsed = json.loads(json_match.group(1))
+                                except:
+                                    pass
+                        
+                        if parsed and isinstance(parsed, dict) and parsed.get("value") not in ["Not mentioned", None]:
+                            # V15.4: Filter LLM synthesis results for disqualifying patterns
+                            llm_value = str(parsed.get("value", "")).lower()
+                            llm_context = str(parsed.get("inferred_context", "")).lower()
+                            llm_sentences = str(parsed.get("exact_sentences", "")).lower()
+                            llm_combined = f"{llm_value} {llm_context} {llm_sentences}"
+                            
+                            # Extract numeric value from LLM response
+                            llm_numeric = None
+                            value_match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)\s*cfs', llm_value)
+                            if value_match:
+                                llm_numeric = float(value_match.group(1).replace(',', ''))
+                            
+                            # Check for disqualifying patterns
+                            is_disqualified = False
+                            disqualify_reason = ""
+                            
+                            # V15.4 FIX: Check if context contradicts the extracted value
+                            # E.g., context says "55 cfs is the minimum" but value is "80 cfs"
+                            if llm_numeric and 'minimum' in llm_context:
+                                # Look for other flow values in context
+                                context_flows = re.findall(r'(\d+(?:,\d{3})*(?:\.\d+)?)\s*cfs', llm_context)
+                                for flow_str in context_flows:
+                                    flow_val = float(flow_str.replace(',', ''))
+                                    if flow_val < llm_numeric and 'minimum' in llm_context:
+                                        # Context mentions a LOWER flow as minimum - extracted value is wrong!
+                                        is_disqualified = True
+                                        disqualify_reason = f"context mentions lower minimum ({flow_val} cfs) but extracted {llm_numeric} cfs"
+                                        break
+                            
+                            if not is_disqualified and any(term in llm_combined for term in ['average annual flow', 'mean flow', 'average flow', 'average discharge']):
+                                if 'minimum' not in llm_value:  # Check value field specifically
+                                    is_disqualified = True
+                                    disqualify_reason = "average flow (not minimum)"
+                            
+                            if not is_disqualified and any(term in llm_combined for term in ['hydraulic capacity', 'installed capacity', 'design capacity', 'generating capacity', 'powerhouse capacity']):
+                                if 'minimum' not in llm_value:
+                                    is_disqualified = True
+                                    disqualify_reason = "hydraulic capacity (not minimum)"
+                            
+                            if not is_disqualified and any(term in llm_combined for term in ['maximum turbine capacity', 'maximum capacity', 'max turbine', 'turbine maximum', 'maximum generating capacity']):
+                                if 'minimum' not in llm_value:
+                                    is_disqualified = True
+                                    disqualify_reason = "maximum turbine capacity (not minimum)"
+                            
+                            if is_disqualified:
+                                print(f"❌ V15.4 POST-SYNTHESIS FILTERING: LLM synthesis result disqualified ({disqualify_reason})")
+                                print(f"   Falling back to next best candidate...")
+                            else:
+                                # V16.3 FIX: Don't accept "no flow" synthesis when we have high-scoring flow candidates
+                                synthesis_value = str(parsed.get('value', '')).lower()
+                                is_no_flow = any(phrase in synthesis_value for phrase in [
+                                    'no minimum flow', 'no separate minimum', 'not mentioned', 
+                                    'no independent minimum', 'no explicit minimum'
+                                ])
+                                
+                                if is_no_flow:
+                                    # Check if we have any high-quality flow candidates (score > 50)
+                                    quality_flows = [f for f in valid_flows if f[2] > 50 and f[0] > 0]
+                                    if quality_flows:
+                                        print(f"❌ V16.3: Rejecting 'no flow' synthesis - we have {len(quality_flows)} high-scoring flow candidates (scores > 50)")
+                                        print(f"   Falling back to scoring-based selection...")
+                                    else:
+                                        print(f"✅ LLM synthesis: {parsed.get('value')} with comprehensive context")
+                                        return parsed
+                                else:
+                                    print(f"✅ LLM synthesis: {parsed.get('value')} with comprehensive context")
+                                    return parsed
+                        else:
+                            print(f"⚠️ LLM synthesis failed, falling back to lowest non-zero value")
+                    except Exception as e:
+                        print(f"⚠️ LLM synthesis error: {e}, falling back to lowest non-zero value")
+                
+                # V16.1 FIX: Select HIGHEST SCORED flow (not lowest value)
+                # When scores are tied, prefer flows with seasonal patterns
+                print(f"🔍 V16.1: Selecting highest-scored from {len(valid_flows)} candidates...")
+                
+                # Sort by score (descending), then by whether it has seasonal schedule, then by value
+                def score_flow(flow_tuple):
+                    flow_val, flow_data, score = flow_tuple
+                    text = f"{flow_data.get('inferred_context', '')} {flow_data.get('exact_sentences', '')}".lower()
+                    # Check if this is a seasonal schedule (multiple flows + months)
+                    flow_count = len(re.findall(r'\b\d+(?:[,.]\d+)?\s*(?:cfs|cubic feet)', text))
+                    seasonal_count = sum(1 for m in ['january', 'february', 'march', 'april', 'may', 'june',
+                                                      'july', 'august', 'september', 'october', 'november', 'december',
+                                                      'spring', 'summer', 'fall', 'winter'] if m in text)
+                    has_schedule = (flow_count >= 3 and seasonal_count >= 2)
+                    # Return tuple for sorting: (score descending, has_schedule descending, value ascending)
+                    return (-score, -int(has_schedule), flow_val)
+                
+                best_flow = min(valid_flows, key=score_flow)
+                print(f"✅ Selected highest-scored: {best_flow[0]} cfs (score: {best_flow[2]})")
+            else:
+                best_flow = max(valid_flows, key=lambda x: x[2])
+                print(f"✅ Selected flow: {best_flow[0]} cfs (score: {best_flow[2]})")
+            
             selected_result = best_flow[1]
+            
+            # V16.1 FIX: Clean output for proper CSV formatting
+            # Remove embedded newlines and SCORING text from context
+            context_text = selected_result.get("inferred_context", "Not applicable")
+            if isinstance(context_text, str):
+                # Remove [SCORING: ...] sections
+                context_text = re.sub(r'\[SCORING:.*?\]', '', context_text, flags=re.DOTALL)
+                # Replace multiple newlines with single space
+                context_text = re.sub(r'\s*\n\s*', ' ', context_text)
+                # Clean up extra spaces
+                context_text = re.sub(r'\s+', ' ', context_text).strip()
+            
+            sentences_text = selected_result.get("exact_sentences", "Not mentioned")
+            if isinstance(sentences_text, str):
+                sentences_text = re.sub(r'\[SCORING:.*?\]', '', sentences_text, flags=re.DOTALL)
+                sentences_text = re.sub(r'\s*\n\s*', ' ', sentences_text)
+                sentences_text = re.sub(r'\s+', ' ', sentences_text).strip()
+            
+            # V16.3 FIX: Preserve original extracted value for seasonal schedules
+            # Check if this is a seasonal schedule with the bonus
+            text = f"{context_text} {sentences_text}".lower()
+            flow_count = len(re.findall(r'\b\d+(?:[,.]\d+)?\s*(?:cfs|cubic feet)', text))
+            seasonal_count = sum(1 for m in ['january', 'february', 'march', 'april', 'may', 'june',
+                                              'july', 'august', 'september', 'october', 'november', 'december',
+                                              'spring', 'summer', 'fall', 'winter'] if m in text)
+            has_schedule = (flow_count >= 3 and seasonal_count >= 2)
+            
+            # If seasonal schedule, use original extracted value; otherwise use numeric value
+            if has_schedule and selected_result.get("value"):
+                output_value = selected_result.get("value").strip()
+                print(f"✅ V16.3: Preserving seasonal schedule '{output_value}'")
+            else:
+                output_value = f"{best_flow[0]:g} cfs"
+
+            
             return {
-                "value": f"{best_flow[0]:g} cfs",  # Use the actual numeric value we selected
-                "inferred_context": selected_result.get("inferred_context", "Not applicable"),
-                "exact_sentences": selected_result.get("exact_sentences", "Not mentioned")
+                "value": output_value,
+                "inferred_context": context_text,
+                "exact_sentences": sentences_text
             }
         
         else:
@@ -1857,8 +1747,11 @@ def smart_chunking_strategy(document_text, chunk_size=1000, filename=""):
 
 def process_document_with_smart_chunking(document_text, prompt, filename=""):
     """
-    V10 Enhanced: Process a document using adaptive chunking and enhanced flow detection.
+    V14 Enhanced: Pre-score chunks to filter before LLM analysis.
+    Only analyze high-scoring chunks to avoid false negatives from irrelevant chunks.
     """
+    from flow_scoring import calculate_chunk_score
+    
     # Apply smart chunking with document-type awareness
     chunks = smart_chunking_strategy(document_text, filename=filename)
     
@@ -1871,30 +1764,166 @@ def process_document_with_smart_chunking(document_text, prompt, filename=""):
     elif any(indicator in filename for indicator in ['License', 'P1', 'P2', 'P3']):
         document_type = "FERC License"
     
-    print(f"📄 V10 processing: {document_type}")
+    print(f"📄 V14 processing: {document_type}")
     print(f"📄 Smart chunking created {len(chunks)} chunks (vs ~{len(document_text)//1000} standard chunks)")
     
-    # Process each chunk with enhanced analysis
-    all_results = []
+    # V15: Score chunks but analyze TOP 15 (not threshold-based filtering)
+    #      This balances coverage with performance
+    print(f"🎯 V15: Pre-scoring {len(chunks)} chunks, will analyze top 15...")
+    chunk_scores = []
     for i, chunk in enumerate(chunks):
-        print(f"🔍 Processing chunk {i+1}/{len(chunks)}...")
+        score = calculate_chunk_score(chunk, filename)
+        chunk_scores.append((i, chunk, score))
+    
+    # Sort by score and take top 15 chunks
+    chunk_scores.sort(key=lambda x: x[2], reverse=True)
+    top_chunks = chunk_scores[:15]
+    print(f"✅ Analyzing top 15 chunks (scores: {top_chunks[0][2]} to {top_chunks[-1][2]})")
+    
+    # V15.5: Filter out proposal-only chunks if Article/mandatory chunks exist
+    has_article_chunks = any('article' in chunk.lower() or 'licensee shall release' in chunk.lower() or 'shall release' in chunk.lower() 
+                             or 'we are requiring' in chunk.lower() or 'our requirement' in chunk.lower() 
+                             for _, chunk, _ in top_chunks)
+    
+    if has_article_chunks:
+        print(f"✅ V15.5: Found Article/mandatory chunks - filtering out proposal-only chunks")
+        filtered_chunks = []
+        for i, chunk, score in top_chunks:
+            chunk_lower = chunk.lower()
+            has_proposal = any(term in chunk_lower for term in ['applicant proposes', 'proposes to', 'licensee proposes', 'as proposed by'])
+            has_mandatory = any(term in chunk_lower for term in ['article', 'licensee shall release', 'shall release', 'we are requiring', 'our requirement', 'must release'])
+            
+            if has_proposal and not has_mandatory:
+                print(f"❌ V15.5: Filtered chunk {i+1} (proposal without Article)")
+            else:
+                filtered_chunks.append((i, chunk, score))
+        
+        top_chunks = filtered_chunks if filtered_chunks else top_chunks
+        print(f"✅ V15.5: {len(top_chunks)} chunks remaining after proposal filtering")
+    
+    # Process top-scoring chunks
+    all_results = []
+    for i, chunk, score in top_chunks:
+        print(f"🔍 Processing chunk {i+1}/{len(chunks)} (score={score})...")
         result = analyze_chunk(chunk, prompt, all_chunks=chunks, filename=filename, document_type=document_type)
         
         # Convert value to string before calling .lower() to handle both string and numeric values
         value = str(result.get("value", "")).lower()
         if value not in ["not mentioned", "error", ""]:
+            print(f"   ✓ Chunk {i+1} extracted: {result.get('value', 'N/A')}")
             all_results.append(result)
+        else:
+            print(f"   ✗ Chunk {i+1} returned: {value}")
     
     # If no results found, return default
     if not all_results:
+        print(f"⚠️ No valid results from any chunk")
         return {
             "value": "Not mentioned",
             "inferred_context": "No minimum flow requirements found after V10 enhanced analysis",
             "exact_sentences": "Not mentioned"
         }
     
+    print(f"\n📊 Total valid extractions: {len(all_results)}")
+    for i, r in enumerate(all_results[:5]):  # Show first 5
+        print(f"   {i+1}. {r.get('value', 'N/A')}")
+    
     # Use enhanced selection with V10 fixes - pass original document for generation conversion checking
-    return ask_ollama_to_select_best("Minimum_Flow", all_results, original_document=document_text, filename=filename)
+    best = ask_ollama_to_select_best("Minimum_Flow", all_results, original_document=document_text, filename=filename)
+    print(f"🏆 Selected best: {best.get('value', 'N/A')}")
+    return best
+
+def process_document_with_smart_chunking_no_selection(document_text, prompt, filename=""):
+    """
+    V16.4: Return ALL candidates without selection to avoid double-scoring interference.
+    This allows external scoring mechanisms (like apply_flow_scoring) to make the final selection.
+    """
+    from flow_scoring import calculate_chunk_score
+    
+    # Apply smart chunking with document-type awareness
+    chunks = smart_chunking_strategy(document_text, filename=filename)
+    
+    # Determine document type
+    document_type = ""
+    if ('WCM' in filename or 'Water Control Manual' in filename or 
+        'Bonneville' in filename or 'Grand Coulee' in filename or
+        'Corps' in filename or 'Reservoir Regulation Manual' in filename):
+        document_type = "Corps Water Control Manual"
+    elif any(indicator in filename for indicator in ['License', 'P1', 'P2', 'P3']):
+        document_type = "FERC License"
+    
+    print(f"📄 V16.4 NO-SELECTION processing: {document_type}")
+    print(f"📄 Smart chunking created {len(chunks)} chunks (vs ~{len(document_text)//1000} standard chunks)")
+    
+    # Pre-score chunks and select top 15
+    print(f"🎯 Pre-scoring {len(chunks)} chunks, will analyze top 15...")
+    chunk_scores = []
+    for i, chunk in enumerate(chunks):
+        score = calculate_chunk_score(chunk, filename)
+        chunk_scores.append((i, chunk, score))
+    
+    # Sort by score and take top 15 chunks
+    chunk_scores.sort(key=lambda x: x[2], reverse=True)
+    top_chunks = chunk_scores[:15]
+    print(f"✅ Analyzing top 15 chunks (scores: {top_chunks[0][2]} to {top_chunks[-1][2]})")
+    
+    # V15.5: Filter out proposal-only chunks if Article/mandatory chunks exist
+    has_article_chunks = any('article' in chunk.lower() or 'licensee shall release' in chunk.lower() or 'shall release' in chunk.lower() 
+                             or 'we are requiring' in chunk.lower() or 'our requirement' in chunk.lower() 
+                             for _, chunk, _ in top_chunks)
+    
+    if has_article_chunks:
+        print(f"✅ V15.5: Found Article/mandatory chunks - filtering out proposal-only chunks")
+        filtered_chunks = []
+        for i, chunk, score in top_chunks:
+            chunk_lower = chunk.lower()
+            has_proposal = any(term in chunk_lower for term in ['applicant proposes', 'proposes to', 'licensee proposes', 'as proposed by'])
+            has_mandatory = any(term in chunk_lower for term in ['article', 'licensee shall release', 'shall release', 'we are requiring', 'our requirement', 'must release'])
+            
+            if has_proposal and not has_mandatory:
+                print(f"❌ V15.5: Filtered chunk {i+1} (proposal without Article)")
+            else:
+                filtered_chunks.append((i, chunk, score))
+        
+        top_chunks = filtered_chunks if filtered_chunks else top_chunks
+        print(f"✅ V15.5: {len(top_chunks)} chunks remaining after proposal filtering")
+    
+    # Process top-scoring chunks and collect ALL results
+    all_results = []
+    for i, chunk, score in top_chunks:
+        print(f"🔍 Processing chunk {i+1}/{len(chunks)} (score={score})...")
+        result = analyze_chunk(chunk, prompt, all_chunks=chunks, filename=filename, document_type=document_type)
+        
+        # Convert value to string before calling .lower() to handle both string and numeric values
+        value = str(result.get("value", "")).lower()
+        if value not in ["not mentioned", "error", ""]:
+            print(f"   ✓ Chunk {i+1} extracted: {result.get('value', 'N/A')}")
+            all_results.append(result)
+        else:
+            print(f"   ✗ Chunk {i+1} returned: {value}")
+    
+    # If no results found, return default (still as dict for compatibility with apply_flow_scoring)
+    if not all_results:
+        print(f"⚠️ No valid results from any chunk")
+        return {
+            "value": "Not mentioned",
+            "inferred_context": "No minimum flow requirements found after V10 enhanced analysis",
+            "exact_sentences": "Not mentioned",
+            "candidates": []  # Empty candidates list
+        }
+    
+    print(f"\n📊 V16.4: Returning ALL {len(all_results)} candidates (no pre-selection)")
+    for i, r in enumerate(all_results[:5]):  # Show first 5
+        print(f"   {i+1}. {r.get('value', 'N/A')}")
+    
+    # Return structure that apply_flow_scoring() can parse
+    # Create a combined response with all candidates embedded
+    return {
+        "value": "MULTIPLE_CANDIDATES",  # Signal to scoring system
+        "inferred_context": f"Found {len(all_results)} candidates from {len(top_chunks)} chunks",
+        "exact_sentences": "See candidates list",
+        "candidates": all_results  # Pass all candidates for scoring
+    }
 
 # Example usage function for backward compatibility
 def enhanced_flow_extraction(document_text, task="Extract minimum flow requirements", filename=""):

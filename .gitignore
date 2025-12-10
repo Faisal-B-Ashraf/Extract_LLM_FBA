@@ -72,3 +72,15 @@ min_flow_results*.csv
 min_flow_timing_results*.csv
 *_test_results.json
 *_comparison.csv
+
+# Extracted chunks (too large for git)
+src/extracted_chunks_*.txt
+
+# Logs
+src/*.log
+experimental_llm_reasoning/*.log
+
+# Temporary/debug files
+src/debug.log
+src/Observed.csv
+src/min_flow_timing_*.csv
