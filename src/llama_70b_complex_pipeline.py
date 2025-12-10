@@ -96,7 +96,7 @@ def load_cached_text(pdf_file):
 def process_file_v11(pdf_file, pdf_folder, existing_results):
     """📄 V11 Enhanced: Process a single PDF file using enhanced flow extraction.
     
-    Optimized for 90% accuracy with conservative baseline prompts.
+    Uses optimized baseline prompts for extraction.
     Uses smart chunking and enhanced text analysis.
     """
     pdf_path = os.path.join(pdf_folder, pdf_file)
@@ -133,7 +133,7 @@ def process_file_v11(pdf_file, pdf_folder, existing_results):
 
     print(f"   🔍 Analyzing for minimum flow requirements...")
     
-    # 🎯 Use optimized baseline prompts achieving 90% accuracy
+    # 🎯 Use optimized baseline prompts
     prompts = get_prompts()
     
     # V16.2 FIX: Simple direct extraction for Project_Name (no chunking/scoring needed!)
@@ -406,11 +406,10 @@ def save_timing_results(pdf_file, total_chunks, avg_chunk_time, file_time, task_
 def main():
     """🚀 Main function to process PDFs and extract minimum flow data.
     
-    Optimized pipeline achieving 90% accuracy on validation set.
-    Uses conservative baseline prompts with enhanced text processing.
+    Optimized pipeline for minimum flow extraction.
+    Uses baseline prompts with enhanced text processing.
     """
     print("🔍 Starting minimum flow extraction pipeline...")
-    print("🎯 Target Accuracy: 90%+ (ACHIEVED)")
     print("=" * 60)
 
     # Validate setup before starting
@@ -455,7 +454,6 @@ def main():
 
     print("\n" + "=" * 60)
     print("🎯 PIPELINE COMPLETED!")
-    print("📊 Expected Accuracy: 90%+ (9/10 correct extractions)")
     print(f"📄 Results saved to: {RESULTS_FILE}")
     print("💡 Open the CSV file to view all results")
     print("=" * 60)
