@@ -1,103 +1,181 @@
-# Source Code Overview
+# Source Code Documentation
 
-## Python Scripts in this Repository
+## Main Pipeline
 
-### 🔧 Complex Pipeline (`src/complex_pipeline/`)
+### `llama_70b_complex_pipeline.py`
+**Primary extraction pipeline**
 
-#### `llama_70b_complex_pipeline.py` 
-**Llama 3.3 70B model with complex pipeline approach**
-- Processes PDFs using production-grade extraction pipeline
-- Optimized for Llama 3.3 70B model (achieves 88.9% accuracy)
-- Handles chunking, API calls, and result saving
-- **Usage**: `python llama_70b_complex_pipeline.py`
+Main entry point for processing regulatory documents. Orchestrates the entire extraction workflow from PDF input to CSV output.
 
-#### `multi_model_complex_pipeline.py`
-**3 smaller models testing with complex pipeline**
-- Tests 3 models: Llama 3 8B, Llama 3.2 3B, GPT-OSS 20B
-- Uses same complex pipeline as 70B script
-- Demonstrates pipeline failure on smaller models (0% accuracy)
-- **Usage**: `python multi_model_complex_pipeline.py`
+**Key Functions:**
+- `process_file_v11()` - Processes single PDF file
+- `load_existing_results()` - Resumes interrupted runs
+- `save_extracted_chunks()` - Saves intermediate text chunks
+- `main()` - Orchestrates batch processing
 
-#### `api_handler.py`
-**API interface for LLM communication**
-- Handles Ollama API calls for all models
-- Includes retry logic and error handling
-- Smart chunking strategies
-- Model-agnostic interface
+**Workflow:**
+1. Check for already-processed files
+2. Extract and chunk PDF text
+3. Send chunks to LLM for candidate extraction
+4. Apply scoring to select best candidate
+5. Save results to CSV
 
-#### `task_definitions_min_flow.py`
-**Extraction prompts and task definitions**
-- Contains complex prompts for minimum flow extraction
-- V12 enhanced prompts achieving 90% accuracy
-- Detailed instructions for precise extraction
-
-#### `pdf_processor_min_flow.py`
-**PDF text extraction utilities**
-- Extracts text from PDF documents
-- Token-based text splitting
-- Text preprocessing functions
-
----
-
-### 🧪 Simple Pipeline (`src/simple_pipeline/`)
-
-#### `multi_model_simple_pipeline.py`
-**All 4 models testing with simple prompt approach**
-- Tests: Llama 3.3 70B, GPT-OSS 20B, Llama 3 8B, Llama 3.2 3B
-- Uses minimal, straightforward prompts (52-78% accuracy range)
-- Validates against human ground truth data
-- **Usage**: `python multi_model_simple_pipeline.py`
-
----
-
-### 📊 Evaluation (`src/evaluation/`)
-
-#### `create_final_comparison.py`
-**Generates publication-ready analysis and figures**
-- Compares all model results
-- Creates performance visualization
-- Generates summary tables
-- **Usage**: `python create_final_comparison.py`
-
----
-
-## Quick Start Commands
-
-### Test Single Model (Fast)
+**Usage:**
 ```bash
-cd src/simple_pipeline
-python multi_model_simple_pipeline.py --models llama3.2:3b --sample 5
-```
-
-### Run 70B Complex Pipeline
-```bash
-cd src/complex_pipeline
 python llama_70b_complex_pipeline.py
 ```
 
-### Test All Smaller Models (Complex Approach)
+**Output Files:**
+- `min_flow_results.csv` - Final extraction results
+- `min_flow_timing_results.csv` - Performance metrics
+- `extracted_chunks_[filename].txt` - Cached text chunks
+
+---
+
+## Core Modules
+
+### `api_handler.py`
+**LLM API interface and text processing**
+
+Handles communication with Ollama server and implements intelligent text chunking strategies.
+
+**Key Functions:**
+- `check_ollama_server()` - Verifies Ollama is running
+- `enhanced_flow_extraction()` - Extracts candidates from text chunks
+- `smart_chunking_strategy()` - Splits text while preserving context
+- `call_ollama_api()` - Low-level API wrapper with retry logic
+
+**Features:**
+- Automatic retry on API failures
+- Context-aware text chunking
+- Token counting and management
+- Error handling and logging
+
+---
+
+### `flow_scoring.py`
+**Candidate scoring and selection logic**
+
+Implements rule-based scoring to identify the most authoritative minimum flow value when multiple candidates are found.
+
+**Scoring Criteria:**
+1. **Regulatory Authority** - Mandatory language (30 points)
+2. **Location Specificity** - At dam/project (25 points)
+3. **Temporal Continuity** - Continuous/year-round (20 points)
+4. **Numeric Precision** - Exact values over ranges (15 points)
+5. **Source Quality** - Clear regulatory context (10 points)
+
+**Key Functions:**
+- `apply_flow_scoring()` - Main scoring entry point
+- `score_candidate()` - Calculates score for single candidate
+- `select_best_candidate()` - Returns highest-scored candidate
+
+---
+
+### `task_definitions_min_flow.py`
+**LLM extraction prompts**
+
+Contains carefully engineered prompts for minimum flow extraction. Prompts guide the LLM to:
+- Identify numeric flow values with units
+- Extract supporting context
+- Preserve exact source sentences
+- Format output as structured JSON
+
+**Key Functions:**
+- `get_prompts()` - Returns task-specific prompts
+- Prompt engineering for regulatory document analysis
+- Output format specifications
+
+---
+
+### `pdf_processor_min_flow.py`
+**PDF text extraction utilities**
+
+Handles PDF file processing and text preprocessing.
+
+**Key Functions:**
+- `extract_text_from_pdf()` - Extracts text from PDF files
+- `split_text_by_tokens()` - Splits text into token-limited chunks
+- `preprocess_text()` - Cleans and normalizes text
+
+**Features:**
+- PyPDF2-based text extraction
+- Token-aware text splitting
+- Preserves document structure
+
+---
+
+### `config.py`
+**Configuration management**
+
+Centralizes all configuration settings for the pipeline.
+
+**Settings:**
+- PDF input folder paths
+- Ollama API endpoint
+- Model selection (llama3.3:70b)
+- Output file locations
+- Logging configuration
+
+**Key Functions:**
+- `get_pdf_folder()` - Returns PDF input directory
+- `ensure_directories()` - Creates required folders
+- `validate_setup()` - Checks prerequisites
+
+---
+
+## Validation
+
+### `compare_v14_results.py`
+**Accuracy validation against ground truth**
+
+Compares pipeline output against human-verified values in `data/Observed.csv`.
+
+**Usage:**
 ```bash
-cd src/complex_pipeline
-python multi_model_complex_pipeline.py
+python compare_v14_results.py
 ```
 
-### Test All Models (Simple Approach)
+**Output:**
+- Accuracy percentage
+- Detailed match/mismatch report
+- Error analysis
+
+---
+
+## Running the Pipeline
+
+### Basic Execution
 ```bash
-cd src/simple_pipeline
-python multi_model_simple_pipeline.py
+cd src
+python llama_70b_complex_pipeline.py
 ```
 
-### Generate Analysis
-```bash
-cd src/evaluation
-python create_final_comparison.py
-```
+### Resume Interrupted Run
+The pipeline automatically skips already-processed files based on `min_flow_results.csv`.
 
-## File Sizes
-- **llama_70b_complex_pipeline.py**: 10KB (278 lines)
-- **multi_model_complex_pipeline.py**: 19KB (486 lines)  
-- **multi_model_simple_pipeline.py**: 9KB (247 lines)
-- **api_handler.py**: 118KB (2,136 lines)
+### Process Specific Files
+Edit `config.py` to change the PDF input folder or modify the file list in `main()`.
+
+---
+
+## Development Notes
+
+**Code Organization:**
+- Main pipeline in `llama_70b_complex_pipeline.py`
+- Modular design with separate concerns
+- Logging throughout for debugging
+- Error handling with graceful degradation
+
+**Performance:**
+- ~10 minutes per document (70B model)
+- Parallel chunk processing where possible
+- Caching of intermediate results
+
+**Maintenance:**
+- Prompts in `task_definitions_min_flow.py` for easy tuning
+- Scoring rules in `flow_scoring.py` for adjustment
+- Configuration centralized in `config.py`
 - **create_final_comparison.py**: 8KB
 
 All scripts are complete and ready to run!

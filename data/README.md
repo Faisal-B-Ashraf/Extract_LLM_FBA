@@ -1,49 +1,80 @@
-# Data Description
+# Data Directory
 
 ## Overview
-This directory contains the ground truth data and test cases used in our LLM pipeline comparison study.
+This directory contains input PDFs, validation data, and supporting files for the minimum flow extraction pipeline.
 
-## Files
+## Files and Folders
+
+### `input_pdfs/`
+**PDF documents to be processed**
+- **FERC Licenses**: 43 hydropower license documents (1978-2018)
+- **Water Control Manuals**: 7 operational manuals (2014-2021)
+- **Total**: 50 regulatory documents
+
+**Naming conventions:**
+- FERC: `P[number]_License_[YYYYMMDD].pdf`
+- WCMs: `[ProjectName]_WCM_[YEAR].pdf`
 
 ### `Observed.csv`
-**Human-verified ground truth dataset**
-- **Source**: Expert manual extraction from regulatory documents
-- **Size**: 58 verified entries
+**Ground truth validation dataset**
+
+Human-verified minimum flow values used to validate pipeline accuracy.
+
+**Purpose:**
+- Benchmark for pipeline accuracy
+- Contains target values that should be extracted
+- Used by validation scripts to measure performance
+
+**Structure:**
+- **58 entries** across 54 documents (some have multiple values)
 - **Columns**:
-  - `filename`: PDF document identifier
-  - `Project name`: Official project name
-  - `Value`: Human-extracted minimum flow value
-  - Additional contextual information
+  - `filename`: PDF document name
+  - `Project name`: Hydropower project identifier
+  - `Value`: Minimum flow requirement (cubic feet per second)
+  - Additional metadata fields
 
-### `min_flow_results4.csv`
-**70B model baseline results**
-- **Source**: Llama 3.3 70B complex pipeline extraction
-- **Size**: 54 matched test cases
-- **Columns**:
-  - `filename`: Document identifier
-  - `Project_Name`: Extracted project name
-  - `Minimum_Flow Value`: Extracted minimum flow
-  - `Minimum_Flow Inferred Context`: Source text context
-  - `Minimum_Flow Exact Sentences`: Exact extraction source
+**Creation Process:**
+1. Manual extraction by domain experts
+2. Review of regulatory language and context
+3. Standardization to consistent units (cfs)
+4. Cross-validation of complex cases
 
-## Ground Truth Validation Process
+### Validation Scope
 
-1. **Expert Review**: Human experts manually extracted minimum flow requirements from 58 regulatory documents
-2. **Cross-Validation**: Multiple reviewers validated complex cases
-3. **Standardization**: Values normalized to consistent units (cfs - cubic feet per second)
-4. **Quality Control**: Entries with ambiguous or conflicting information were flagged
+Of the 58 ground truth entries:
+- **54 have matching documents** in input_pdfs/
+- **4 are supplementary** (multiple flows for same project)
+- Pipeline tested against all 54 document-matched entries
+- Current accuracy: **88.9%** (48 correct extractions)
 
-## Test Case Matching
+## Data Sources
 
-Of the 58 ground truth entries, 54 were successfully matched with document text chunks for model testing, providing a robust validation dataset for our comparative analysis.
+**FERC License Documents:**
+- Publicly available from FERC eLibrary
+- Official hydropower project licenses
+- Contain minimum flow requirements as license conditions
 
-## Usage in Experiments
+**Water Control Manuals:**
+- U.S. Army Corps of Engineers operational manuals
+- Define operational rules including minimum flows
+- Cover major dam projects (Fort Peck, Grand Coulee, etc.)
 
-Both complex and simple pipeline approaches use this ground truth data for:
-- **Accuracy measurement**: Direct comparison against human extractions
-- **Consistency validation**: Ensuring fair comparison across all 4 models
-- **Error analysis**: Understanding model failure patterns
+## Usage
+
+### Pipeline Processing
+```bash
+# Pipeline reads PDFs from input_pdfs/
+cd src
+python llama_70b_complex_pipeline.py
+```
+
+### Validation
+```bash
+# Compare pipeline output against Observed.csv
+cd src
+python compare_v14_results.py
+```
 
 ## Data Privacy
 
-All documents used are publicly available regulatory filings. No sensitive or proprietary information is included in this dataset.
+All documents are publicly available regulatory filings. No proprietary or confidential information is included.

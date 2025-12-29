@@ -1,160 +1,174 @@
-# LLM Pipeline Performance Study
+# Minimum Flow Extraction Pipeline
 
-**Production-Grade Document Extraction: A Comparative Analysis of LLM Capabilities**
+**Automated extraction of minimum flow requirements from hydropower regulatory documents using LLM-assisted analysis.**
 
-## Abstract
+## Overview
 
-This repository contains the complete implementation and evaluation code for our research testing 4 Large Language Models (LLMs) with production-grade document extraction pipelines. Our key finding: **only large-scale models can handle complex production prompts** for reliable deployment.
+This pipeline automatically extracts minimum flow requirements from FERC hydropower licenses and Water Control Manuals (WCMs). It processes PDF documents, identifies relevant flow requirements, and uses intelligent scoring to select the most authoritative values.
 
-## Key Results
+## Purpose
 
-| Model | Production Pipeline | Speed (docs/hr) | Status |
-|-------|-------------------|-----------------|---------|
-| **Llama 3.3 70B** | **88.9%** | 5.7 | ✅ Production Ready |
-| **GPT-OSS 20B** | **0%** | 6.6 | ❌ Complete Failure |
-| **Llama 3 8B** | **0%** | 34.0 | ❌ Complete Failure |
-| **Llama 3.2 3B** | **0%** | 28.8 | ❌ Complete Failure |
+**What it does:**
+- Extracts minimum flow requirements from regulatory PDFs
+- Processes FERC licenses (1978-2018) and Water Control Manuals (2014-2021)
+- Identifies flow values with context and supporting evidence
+- Validates against human-verified ground truth data
 
-### Main Discovery
-- **Only 70B model succeeds** with production-grade prompts (88.9% accuracy)
-- **Smaller models completely fail** (0% success rate)
-- **89 percentage point performance gap** between largest and smaller models
-- **Model scale is critical** for complex prompt engineering
+**Why it exists:**
+Manually reviewing hundreds of regulatory documents to extract minimum flow requirements is time-consuming and error-prone. This pipeline automates the extraction process while maintaining high accuracy through intelligent candidate scoring.
+
+## Performance
+
+- **Accuracy:** 88.9% on validated test set (48 of 54 documents)
+- **Speed:** ~10 minutes per document
+- **Coverage:** Processes 50 regulatory documents (43 FERC licenses + 7 WCMs)
 
 ## Repository Structure
 
 ```
-├── src/                     # Source code
-│   ├── llama_70b_complex_pipeline.py       # 70B model implementation
-│   ├── multi_model_complex_pipeline.py     # Multi-model testing
-│   ├── api_handler.py                      # LLM API interface
-│   ├── task_definitions_min_flow.py        # Production-grade prompts
-│   ├── pdf_processor_min_flow.py          # Document processing
-│   └── config.py                           # Configuration system
-├── data/                    # Ground truth and test datasets
-├── results/                 # Model performance results
-├── figures/                 # Publication-ready visualizations
-├── docs/                    # Additional documentation
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
+├── src/                                    # Production pipeline
+│   ├── llama_70b_complex_pipeline.py     # Main extraction pipeline
+│   ├── api_handler.py                     # LLM interface and chunking
+│   ├── flow_scoring.py                    # Candidate scoring logic
+│   ├── task_definitions_min_flow.py       # Extraction prompts
+│   ├── pdf_processor_min_flow.py          # PDF text extraction
+│   └── config.py                          # Configuration
+├── data/                                   # Input data and validation
+│   ├── input_pdfs/                        # PDF documents to process
+│   └── Observed.csv                       # Ground truth validation data
+├── experimental_llm_reasoning/            # Experimental approaches
+├── results/                               # Output files
+└── requirements.txt                       # Python dependencies
 ```
 
 ## Quick Start
 
-### 1. Clone and Setup
+### 1. Prerequisites
+
+**System Requirements:**
+- Python 3.8 or higher
+- 16GB+ RAM recommended (for Llama 70B)
+- ~40GB disk space for model
+
+**Install Ollama:**
 ```bash
-git clone <repository-url>
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Start Ollama server
+ollama serve &
+
+# Download Llama 3.3 70B model (~40GB download)
+ollama pull llama3.3:70b
+
+# Verify installation
+ollama run llama3.3:70b "Test message"
+```
+
+### 2. Setup Pipeline
+
+```bash
+# Clone repository
+git clone https://github.com/Faisal-B-Ashraf/Extract_LLM_FBA.git
 cd Extract_LLM_FBA
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Verify setup
 ./setup.sh
 ```
 
-### 2. Add Your PDF Documents
-```bash
-# Copy your PDF files to the input folder
-cp /path/to/your/documents/*.pdf data/input_pdfs/
+### 3. Add PDF Documents
 
-# Or create symbolic links
-ln -s /path/to/your/pdf/folder/* data/input_pdfs/
+```bash
+# Copy PDFs to input folder
+cp /path/to/your/pdfs/*.pdf data/input_pdfs/
+
+# Or use symbolic links
+ln -s /path/to/pdf/folder/* data/input_pdfs/
 ```
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
+### 4. Run Extraction Pipeline
 
-### 4. Setup and Start Ollama (REQUIRED)
-```bash
-# Install Ollama if not already installed
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# 🚨 IMPORTANT: Start Ollama server (MUST RUN FIRST)
-ollama serve &
-
-# Download models (this may take time - models are large)
-ollama pull llama3.3:70b      # ~40GB
-ollama pull llama3:8b         # ~4.7GB  
-ollama pull llama3.2:3b       # ~2GB
-ollama pull gpt-oss:20b       # ~12GB
-
-# Verify Ollama is running
-ollama run llama3.2:3b "Hello, are you working?"
-```
-
-> **⚠️ Critical Step:** You MUST run `ollama serve &` before running any experiments. The scripts will fail with clear error messages if Ollama is not running.
-
-### 5. Run Experiments
-
-**Test 70B Model:**
 ```bash
 cd src
 python llama_70b_complex_pipeline.py
 ```
 
-**Test All Models:**
-```bash
-cd src
-python multi_model_complex_pipeline.py
-```
+**Output:**
+- `min_flow_results.csv` - Extracted minimum flow values with context
+- `min_flow_timing_results.csv` - Processing time per document
+- `extracted_chunks_*.txt` - Intermediate text chunks (for debugging)
 
-## Results
-```bash
-cd src/simple_pipeline
-python multi_model_simple_pipeline.py
-```
+## How It Works
 
-**Generate Comparison Analysis:**
-```bash
-cd src/evaluation
-python create_comparison_analysis.py
-```
+### 1. Document Processing
+- Extracts text from PDF documents using PyPDF2
+- Splits text into manageable chunks (~500 tokens each)
+- Preserves document structure and context
 
-## Models Tested
+### 2. Candidate Extraction
+- Uses Llama 3.3 70B to identify potential minimum flow values in each chunk
+- Extracts supporting context and exact source sentences
+- Captures multiple candidates per document
 
-1. **Llama 3.3 70B** - State-of-the-art large model
-2. **GPT-OSS 20B** - Mid-size open source model
-3. **Llama 3 8B** - Efficient small-large model
-4. **Llama 3.2 3B** - Resource-constrained model
+### 3. Intelligent Scoring
+- Scores candidates based on:
+  - **Regulatory language** (mandatory vs advisory)
+  - **Location specificity** (at dam, downstream, at gage)
+  - **Temporal constraints** (continuous, seasonal, conditional)
+  - **Numeric precision** (range bounds, exact values)
+- Selects highest-scored candidate as final answer
 
-## Methodology
+### 4. Validation
+- Compares results against human-verified ground truth
+- Provides detailed extraction context for manual review
 
-### Ground Truth Validation
-- **58 human-verified entries** from regulatory documents
-- **54 matched test cases** with document text chunks
-- **String matching with contextual validation**
+## Document Types
 
-### Pipeline Approaches
-1. **Complex Pipeline**: Multi-stage processing with advanced prompting
-2. **Simple Pipeline**: Direct extraction with minimal prompting
+**FERC Hydropower Licenses** (43 documents)
+- Date range: 1978-2018
+- Format: P[number]_License_[YYYYMMDD].pdf
+- Example: P1051_License_20070817.pdf
 
-### Evaluation Metrics
-- **Accuracy**: Exact match against human ground truth
-- **Speed**: Documents processed per hour
-- **Resource Efficiency**: Performance per parameter count
+**Water Control Manuals** (7 documents)
+- Date range: 2014-2021
+- Format: [ProjectName]_WCM_[YEAR].pdf
+- Example: FortPeck_WCM_2018.pdf
 
-## Citation
+## Configuration
 
-If you use this code or data in your research, please cite:
+Edit `src/config.py` to customize:
+- PDF input folder location
+- LLM model selection
+- API endpoints
+- Output file paths
 
-```bibtex
-@article{yourname2025llm,
-  title={Engineering Approach vs Model Size: A Comparative Analysis of LLM Document Extraction Pipelines},
-  author={Your Name},
-  journal={Your Journal},
-  year={2025}
-}
-```
+## Validation
+
+Ground truth data in `data/Observed.csv` contains human-verified minimum flow values for 54 documents. The pipeline achieves 88.9% accuracy against this validation set.
+
+## Troubleshooting
+
+**"Ollama server not responding"**
+- Ensure Ollama is running: `ollama serve &`
+- Check server status: `curl http://localhost:11434/api/tags`
+
+**"Model not found"**
+- Download model: `ollama pull llama3.3:70b`
+- Verify available models: `ollama list`
+
+**Slow processing**
+- Llama 70B requires significant compute resources
+- Expected: ~10 minutes per document
+- Consider using GPU acceleration if available
+
+**Low accuracy on custom documents**
+- Pipeline is optimized for FERC licenses and WCMs
+- May require prompt tuning for other document types
+- See `task_definitions_min_flow.py` for prompt engineering
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Contact
-
-- **Author**: [Your Name]
-- **Email**: [your.email@domain.com]
-- **Paper**: [Link to paper when published]
-
----
-
-**Generated**: August 2025  
-**Study Focus**: Engineering approach impact on LLM accessibility across model scales
+MIT License - See LICENSE file for details.
