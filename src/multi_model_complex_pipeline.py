@@ -171,19 +171,61 @@ def save_extracted_chunks(pdf_file, chunks, model_name):
             f.write(f"--- Chunk {i} ---\n{chunk}\n\n")
 
 def enhanced_flow_extraction_with_model(document_text, task, filename, model_name):
-    """Modified version of enhanced_flow_extraction that accepts a model parameter."""
+    """
+    Modified version that uses same logic as 70B pipeline but with model parameter.
+    Uses smart chunking, pre-scoring, and robust JSON parsing like the 70B pipeline.
+    """
     from api_handler import smart_chunking_strategy
+    from flow_scoring import calculate_chunk_score
     import requests
     import json
+    import re
     
-    # Get chunks using the same strategy
+    # Get chunks using the same strategy as 70B
     chunks = smart_chunking_strategy(document_text, filename=filename)
     
-    # Process each chunk with the specified model
-    all_results = []
+    # Determine document type (same as 70B pipeline)
+    document_type = ""
+    if ('WCM' in filename or 'Water Control Manual' in filename or 
+        'Bonneville' in filename or 'Grand Coulee' in filename or
+        'Corps' in filename or 'Reservoir Regulation Manual' in filename):
+        document_type = "Corps Water Control Manual"
+    elif any(indicator in filename for indicator in ['License', 'P1', 'P2', 'P3']):
+        document_type = "FERC License"
     
+    print(f"   📄 {document_type} - Created {len(chunks)} chunks")
+    
+    # Pre-score chunks and select top 15 (same as 70B pipeline)
+    chunk_scores = []
     for i, chunk in enumerate(chunks):
-        # Create the payload with the specified model
+        score = calculate_chunk_score(chunk, filename)
+        chunk_scores.append((i, chunk, score))
+    
+    chunk_scores.sort(key=lambda x: x[2], reverse=True)
+    top_chunks = chunk_scores[:15]
+    print(f"   🎯 Analyzing top 15 chunks (scores: {top_chunks[0][2]:.1f} to {top_chunks[-1][2]:.1f})")
+    
+    # Filter out proposal-only chunks if Article/mandatory chunks exist (same as 70B)
+    has_article_chunks = any('article' in chunk.lower() or 'licensee shall release' in chunk.lower() 
+                             for _, chunk, _ in top_chunks)
+    
+    if has_article_chunks:
+        filtered_chunks = []
+        for i, chunk, score in top_chunks:
+            chunk_lower = chunk.lower()
+            has_proposal = any(term in chunk_lower for term in ['applicant proposes', 'proposes to'])
+            has_mandatory = any(term in chunk_lower for term in ['article', 'licensee shall release', 'we are requiring'])
+            
+            if not (has_proposal and not has_mandatory):
+                filtered_chunks.append((i, chunk, score))
+        
+        top_chunks = filtered_chunks if filtered_chunks else top_chunks
+        print(f"   ✅ {len(top_chunks)} chunks after filtering proposals")
+    
+    # Process top chunks and collect ALL candidates (same as 70B)
+    all_candidates = []
+    
+    for i, chunk, score in top_chunks:
         payload = {
             "model": model_name,
             "prompt": f"{task}\n\nDocument text:\n{chunk}",
@@ -201,39 +243,68 @@ def enhanced_flow_extraction_with_model(document_text, task, filename, model_nam
                                    timeout=120)
             
             if response.status_code == 200:
-                result = response.json()
-                response_text = result.get("response", "").strip()
-                all_results.append(response_text)
-            else:
-                print(f"   ⚠️ API Error for chunk {i+1}: {response.status_code}")
-                all_results.append("Error")
+                response_text = response.json().get("response", "").strip()
                 
+                # Robust JSON parsing (same as 70B pipeline's analyze_chunk)
+                candidate = None
+                
+                # Try parsing as JSON first
+                if response_text.startswith("{"):
+                    try:
+                        candidate = json.loads(response_text)
+                    except:
+                        pass
+                elif "```json" in response_text:
+                    # Extract JSON from markdown code block
+                    json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
+                    if json_match:
+                        try:
+                            candidate = json.loads(json_match.group(1))
+                        except:
+                            pass
+                
+                # If JSON parsing failed, try plain text parsing
+                if not candidate:
+                    candidate = {
+                        "value": "Not mentioned",
+                        "inferred_context": "No context provided",
+                        "exact_sentences": "No exact sentences found"
+                    }
+                    lines = response_text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith("Value:"):
+                            candidate["value"] = line.replace("Value:", "").strip()
+                        elif line.startswith("Context:"):
+                            candidate["inferred_context"] = line.replace("Context:", "").strip()
+                        elif line.startswith("Exact Sentences:"):
+                            candidate["exact_sentences"] = line.replace("Exact Sentences:", "").strip()
+                
+                # Add candidate if it has a value
+                value = str(candidate.get("value", "")).lower()
+                if value not in ["not mentioned", "error", ""]:
+                    all_candidates.append(candidate)
+                    
         except Exception as e:
-            print(f"   ⚠️ Exception for chunk {i+1}: {str(e)}")
-            all_results.append("Error")
+            print(f"   ⚠️ Chunk {i+1} error: {str(e)[:50]}")
+            continue
     
-    # Combine and parse results (using same logic as original)
-    combined_response = "\n".join([r for r in all_results if r != "Error"])
+    # Return in format expected by apply_flow_scoring (same as 70B)
+    if not all_candidates:
+        return {
+            "value": "Not mentioned",
+            "inferred_context": "No minimum flow found",
+            "exact_sentences": "Not mentioned",
+            "candidates": []
+        }
     
-    # Parse the response to extract structured data
-    result = {
-        "value": "Not mentioned",
-        "inferred_context": "No context provided",
-        "exact_sentences": "No exact sentences found"
+    print(f"   ✓ Found {len(all_candidates)} candidates")
+    return {
+        "value": "MULTIPLE_CANDIDATES",
+        "inferred_context": f"Found {len(all_candidates)} candidates",
+        "exact_sentences": "See candidates list",
+        "candidates": all_candidates
     }
-    
-    if combined_response and "Not mentioned" not in combined_response:
-        lines = combined_response.split('\n')
-        for line in lines:
-            line = line.strip()
-            if line.startswith("Value:"):
-                result["value"] = line.replace("Value:", "").strip()
-            elif line.startswith("Context:"):
-                result["inferred_context"] = line.replace("Context:", "").strip()
-            elif line.startswith("Exact Sentences:"):
-                result["exact_sentences"] = line.replace("Exact Sentences:", "").strip()
-    
-    return result
 
 def save_results_for_model(pdf_file, final_values, task_hashes=None, results_file=""):
     """📂 Save extracted results in clean CSV format for specific model."""
@@ -358,22 +429,34 @@ def process_file_with_model(pdf_file, pdf_folder, model_config, existing_results
     # Extract Project Name (use first 15000 chars where name is typically mentioned)
     name_text = text[:15000]
     name_task = prompts["Project_Name"]
-    name_result = enhanced_flow_extraction_with_model(
+    name_result_raw = enhanced_flow_extraction_with_model(
         document_text=name_text,
         task=name_task,
         filename=pdf_file,
         model_name=model_name
     )
     
+    # For name/location, just take first candidate if multiple exist
+    if name_result_raw.get("value") == "MULTIPLE_CANDIDATES" and name_result_raw.get("candidates"):
+        name_result = name_result_raw["candidates"][0]
+    else:
+        name_result = name_result_raw
+    
     # Extract Project Location (use first 15000 chars where location is typically mentioned)
     location_text = text[:15000]
     location_task = prompts["Project_Location"]
-    location_result = enhanced_flow_extraction_with_model(
+    location_result_raw = enhanced_flow_extraction_with_model(
         document_text=location_text,
         task=location_task,
         filename=pdf_file,
         model_name=model_name
     )
+    
+    # For name/location, just take first candidate if multiple exist
+    if location_result_raw.get("value") == "MULTIPLE_CANDIDATES" and location_result_raw.get("candidates"):
+        location_result = location_result_raw["candidates"][0]
+    else:
+        location_result = location_result_raw
     
     # 🔧 Validate location result - remove flow values if present
     import re
