@@ -1,0 +1,38 @@
+3.2.2. Accuracy and Model Comparison for Targeted Extraction
+
+The performance of the complex LLM-based extraction pipeline was evaluated across four model scales (3B Llama 3.2, 8B Llama 3, 20B GPT-OSS, and 70B Llama 3.3) using manual validation against ground truth values. All models were tested using the same optimized prompt and identical preprocessing workflow to ensure fair comparison. The results demonstrated a clear model size threshold effect, with only the 70B model achieving acceptable accuracy for regulatory document extraction (Fig. 7).
+
+70B Llama 3.3 Model:
+•	Correct: 38 cases (76.0%) - Accurate extraction matching manual validation
+•	Wrong: 12 cases (24.0%) - Incorrect extraction, missed requirements, or significant errors
+•	Total: 50 documents evaluated
+
+Example Results:
+•	Correct: Bonneville Dam - Expected "70,000-100,000 cfs (typical) 58,000 cfs (exceptional)" → Extracted "70,000-100,000 cfs" (captured range correctly)
+•	Correct: P10773 - Expected "55 cfs required (or natural flow, if less)" → Extracted "55 cfs" (matched exactly)
+•	Wrong: FortPeck - Expected "3000 cfs" → Extracted "85,000 cfs" (incorrect value)
+•	Wrong: P10813 - Expected "100 cfs" → Extracted "160 cfs" (incorrect value)
+
+Smaller Model Performance:
+All smaller models demonstrated inadequate performance for complex regulatory extraction despite identical prompts and pipeline configuration:
+•	20B GPT-OSS: 18 correct (36.0%), 32 wrong (64.0%)
+•	3B Llama 3.2: 14 correct (28.0%), 36 wrong (72.0%)
+•	8B Llama 3: 13 correct (26.0%), 37 wrong (74.0%)
+
+The smaller models exhibited systematic failures including:
+- Frequent "Not mentioned" responses for documents with clear requirements (20B: 24 false negatives)
+- Hallucinated values (3B: repeated extraction of "58,000 cfs" across unrelated documents)
+- Confused context (3B: extracted "50 years" instead of "55 cfs")
+- Missing most conditional and seasonal requirements
+
+These failures indicate that model capacity below 70B parameters is insufficient for complex regulatory document extraction, regardless of architectural improvements or training data recency.
+
+Processing times per document for the four models were as follows:
+•	70B Llama 3.3: 249.7 seconds
+•	20B GPT-OSS: 138.2 seconds
+•	3B Llama 3.2: 71.4 seconds
+•	8B Llama 3: 49.6 seconds
+
+The results reveal a critical trade-off: only the 70B model achieves production-ready accuracy (76%), but at substantially higher computational cost (249.7s/document vs 49.6-138.2s for smaller models). The 2-3x difference in accuracy between 70B (76%) and smaller models (26-36%) demonstrates a clear model size threshold for handling complex regulatory language extraction tasks.
+
+Figure 7: Trade-off between model accuracy and processing time. The 70B model achieves 76% accuracy with 249.7s processing time per document, while smaller models (3B-20B) fail to reach acceptable accuracy (26-36%) despite faster processing (49.6-138.2s per document). This demonstrates a critical model size threshold for complex regulatory document extraction tasks.

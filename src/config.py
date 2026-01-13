@@ -28,7 +28,7 @@ RESULTS_OUTPUT_DIR = "results"
 FIGURES_OUTPUT_DIR = "figures"
 
 # Ground truth data paths
-GROUND_TRUTH_FILE = "data/Observed.csv"
+GROUND_TRUTH_FILE = "src/min_flow_results_Observed.csv"
 BASELINE_RESULTS_FILE = "data/min_flow_results4.csv"
 
 # Model configurations

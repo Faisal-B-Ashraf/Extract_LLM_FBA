@@ -310,8 +310,8 @@ def main():
     
     observed_df = pd.read_csv("Observed_extended_variables.csv", encoding='latin-1')
     
-    # Also load Observed.csv for minimum_flow comparison
-    observed_minflow_df = pd.read_csv("../data/Observed.csv", on_bad_lines='skip')
+    # Also load min_flow_results_Observed.csv for minimum_flow comparison
+    observed_minflow_df = pd.read_csv("min_flow_results_Observed.csv")
     
     print(f"   LLM results: {len(llm_df)} files")
     print(f"   Ground truth: {len(observed_df)} files")

@@ -1,0 +1,77 @@
+70B MODEL ERROR CLASSIFICATION ANALYSIS
+================================================================================
+
+Total Errors: 12 wrong cases out of 50 documents (24.0% error rate)
+
+ERROR CATEGORIES:
+
+1. FALSE POSITIVE EXTRACTION (4 cases, 33.3%)
+   - Model extracted values when none exist or no requirement specified
+   - P12379: Expected "No minimum flow required" → Extracted "40 cfs"
+   - P1494: Expected "Not mentioned" → Extracted "25 cfs"
+   - P3015: Expected "Not mentioned" → Extracted "200.0 cfs"
+   - P620: Expected "Not mentioned" → Extracted "1.3 cfs, 0.03 cfs, 406 cfs"
+   - P7396: Expected "No minimum flow mandated" → Extracted "50.0 cfs, 200.0 cfs"
+   - P8221: Expected "Not mentioned" → Extracted "439-1,250 cfs, average 497 cfs"
+   NOTE: Actually 6 cases (50.0%)
+
+2. WRONG VALUE EXTRACTION (4 cases, 33.3%)
+   - Model extracted incorrect numeric value
+   - FortPeck: Expected "3000 cfs" → Extracted "85,000 cfs" (28x too high)
+   - P10813: Expected "100 cfs" → Extracted "160.0 cfs" (60% error)
+   - P308: Expected "4-5 cfs" → Extracted "0.5 cfs" (90% too low)
+   - P1773: Expected "35 cfs (April-Sept), 20 cfs (Oct-Mar)" → Extracted "10.0 cfs"
+
+3. MISSING CRITICAL CONTEXT (1 case, 8.3%)
+   - Model missed conditional/operational context
+   - LaurelRiver: Expected "0.5 hr generation every other day" → Extracted "60-70 cfs"
+     (Converted generation requirement to cfs without basis)
+
+4. CONFUSION WITH NON-MINIMUM FLOW VALUES (1 case, 8.3%)
+   - Model extracted fishway flow instead of minimum flow requirement
+   - P2566: Expected "Run-of-river (30 cfs fishway)" → Extracted "200 cfs"
+     (Extracted wrong flow type)
+
+================================================================================
+SUMMARY STATISTICS:
+================================================================================
+
+Error Distribution:
+- False Positive Extraction: 6 cases (50.0%)
+- Wrong Value Extraction: 4 cases (33.3%)
+- Missing Critical Context: 1 case (8.3%)
+- Confusion with Non-Minimum Flow: 1 case (8.3%)
+
+Primary Failure Mode: FALSE POSITIVES (50%)
+- Model tendency to extract values even when documents explicitly state 
+  "no minimum flow required" or don't mention minimum flows at all
+- This suggests over-extraction bias in the complex pipeline
+
+Secondary Failure Mode: WRONG VALUES (33.3%)
+- Numeric errors ranging from 60% to 2800% deviation
+- Includes both wrong values from document and wrong interpretation of seasonal schedules
+- Suggests confusion between different flow types in document
+  (e.g., maximum capacity vs minimum flow, inflow vs outflow)
+
+Key Finding:
+The 70B model's errors are primarily false positives (extracting when shouldn't) 
+and wrong values (extracting incorrect numbers), NOT failure to extract when 
+requirements exist.
+
+================================================================================
+COMPARISON TO EXPECTED ERROR PATTERN:
+================================================================================
+
+Unlike the example which showed:
+- 30.6% missing critical context
+- 25.0% false positives  
+- 19.4% temporal oversimplification
+
+Our 70B model shows:
+- 50.0% false positives (DOMINANT failure mode)
+- 33.3% wrong value extraction
+- Only 16.7% other errors (context/confusion)
+
+This suggests the 70B model is AGGRESSIVE in extraction (over-extracts) rather 
+than conservative (under-extracts), which may be tunable via prompt engineering 
+to emphasize "only extract if explicitly stated as minimum flow requirement."

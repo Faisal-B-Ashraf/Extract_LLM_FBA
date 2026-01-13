@@ -1,141 +1,141 @@
-# Minimum Flow Extraction Pipeline
+# LLM-Based Extraction Pipeline for Hydropower Regulatory Documents
 
-**Automated extraction of minimum flow requirements from hydropower regulatory documents using LLM-assisted analysis.**
+**Automated information extraction from FERC licenses and Water Control Manuals using large language models.**
 
 ## Overview
 
-This pipeline automatically extracts minimum flow requirements from FERC hydropower licenses and Water Control Manuals (WCMs). It processes PDF documents, identifies relevant flow requirements, and uses intelligent scoring to select the most authoritative values.
-
-## Purpose
-
-**What it does:**
-- Extracts minimum flow requirements from regulatory PDFs
-- Processes FERC licenses (1978-2018) and Water Control Manuals (2014-2021)
-- Identifies flow values with context and supporting evidence
-- Validates against human-verified ground truth data
-
-**Why it exists:**
-Manually reviewing hundreds of regulatory documents to extract minimum flow requirements is time-consuming and error-prone. This pipeline automates the extraction process while maintaining high accuracy through intelligent candidate scoring.
-
-## Performance
-
-- **Accuracy:** 88.9% on validated test set (48 of 54 documents)
-- **Speed:** ~10 minutes per document
-- **Coverage:** Processes 50 regulatory documents (43 FERC licenses + 7 WCMs)
+This repository contains the code and data accompanying the research paper on automated extraction of regulatory information from hydropower documents. The pipeline implements both simple zero-shot extraction and sophisticated targeted extraction approaches using large language models.
 
 ## Repository Structure
 
 ```
-├── src/                                    # Production pipeline
-│   ├── llama_70b_complex_pipeline.py     # Main extraction pipeline
-│   ├── api_handler.py                     # LLM interface and chunking
-│   ├── flow_scoring.py                    # Candidate scoring logic
-│   ├── task_definitions_min_flow.py       # Extraction prompts
-│   ├── pdf_processor_min_flow.py          # PDF text extraction
-│   └── config.py                          # Configuration
-├── data/                                   # Input data and validation
-│   ├── input_pdfs/                        # PDF documents to process
-│   └── Observed.csv                       # Ground truth validation data
-├── experimental_llm_reasoning/            # Experimental approaches
-├── results/                               # Output files
+├── src/                                    # Main extraction pipelines
+│   ├── llama_70b_complex_pipeline.py      # Targeted extraction pipeline (minimum flow)
+│   ├── llama_70b_v18_simple.py            # Simple zero-shot extraction pipeline
+│   ├── api_handler.py                     # LLM interface and document processing
+│   ├── deterministic_selector.py          # Candidate scoring and selection
+│   ├── task_definitions_min_flow.py       # Extraction task definitions
+│   └── config.py                          # Configuration settings
+├── data/                                   # Input documents and validation data
+│   ├── input_pdfs/                        # Regulatory documents (50 PDFs)
+│   └── Observed_LLM_comparison.csv        # Manual validation ground truth
+├── experimental_llm_reasoning/            # Experimental pipeline variants
+├── figures/                               # Generated figures
+├── results/                               # Extraction results and analysis
 └── requirements.txt                       # Python dependencies
 ```
 
-## Quick Start
+## Dataset
 
-### 1. Prerequisites
+**Document Collection:**
+- 43 FERC hydropower licenses (1978-2018)
+- 7 Water Control Manuals (2014-2021)
+- Total: 50 regulatory documents
 
-**System Requirements:**
+**Extracted Variables:**
+- Project/Dam Name
+- Owner/Operator
+- Location (City, County, River)
+- Generation Capacity
+- Plant Type
+- Licensing Dates
+- Key Stakeholders
+- Project Costs
+- Migratory Fish Species
+- Minimum Flow Requirements
+
+## Installation
+
+### Prerequisites
+
 - Python 3.8 or higher
-- 16GB+ RAM recommended (for Llama 70B)
-- ~40GB disk space for model
+- Ollama server for LLM inference
+- 16GB+ RAM (recommended for 70B model)
 
-**Install Ollama:**
-```bash
-# Linux
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Start Ollama server
-ollama serve &
-
-# Download Llama 3.3 70B model (~40GB download)
-ollama pull llama3.3:70b
-
-# Verify installation
-ollama run llama3.3:70b "Test message"
-```
-
-### 2. Setup Pipeline
+### Setup
 
 ```bash
 # Clone repository
 git clone https://github.com/Faisal-B-Ashraf/Extract_LLM_FBA.git
 cd Extract_LLM_FBA
 
-# Install Python dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# Verify setup
-./setup.sh
+# Install and start Ollama server
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama serve &
+
+# Download required model
+ollama pull llama3.3:70b
 ```
 
-### 3. Add PDF Documents
+## Usage
+
+### Simple Zero-Shot Extraction
+
+Extract all ten variables from documents using direct prompting:
 
 ```bash
-# Copy PDFs to input folder
-cp /path/to/your/pdfs/*.pdf data/input_pdfs/
-
-# Or use symbolic links
-ln -s /path/to/pdf/folder/* data/input_pdfs/
+cd src
+python llama_70b_v18_simple.py
 ```
 
-### 4. Run Extraction Pipeline
+**Output:** `multi_variable_simple_results.csv`
+
+### Targeted Extraction (Minimum Flow)
+
+Extract minimum flow requirements using sophisticated multi-step pipeline:
 
 ```bash
 cd src
 python llama_70b_complex_pipeline.py
 ```
 
-**Output:**
-- `min_flow_results.csv` - Extracted minimum flow values with context
-- `min_flow_timing_results.csv` - Processing time per document
-- `extracted_chunks_*.txt` - Intermediate text chunks (for debugging)
+**Output:** 
+- `min_flow_results.csv` - Extracted values with context
+- `min_flow_timing_results.csv` - Processing times
 
-## How It Works
+## Pipeline Architecture
 
-### 1. Document Processing
-- Extracts text from PDF documents using PyPDF2
-- Splits text into manageable chunks (~500 tokens each)
-- Preserves document structure and context
+### Simple Zero-Shot Extraction
+1. Extract full text from PDF
+2. Submit entire document text to LLM with variable-specific prompts
+3. Parse structured JSON output
 
-### 2. Candidate Extraction
-- Uses Llama 3.3 70B to identify potential minimum flow values in each chunk
-- Extracts supporting context and exact source sentences
-- Captures multiple candidates per document
+### Targeted Extraction
+1. **Document Chunking:** Split document into overlapping text segments
+2. **Relevance Filtering:** Identify chunks containing target information
+3. **Candidate Extraction:** Extract multiple candidates with supporting context
+4. **Deterministic Selection:** Score and select most authoritative candidate based on:
+   - Regulatory language strength
+   - Location specificity
+   - Temporal constraints
+   - Numeric precision
 
-### 3. Intelligent Scoring
-- Scores candidates based on:
-  - **Regulatory language** (mandatory vs advisory)
-  - **Location specificity** (at dam, downstream, at gage)
-  - **Temporal constraints** (continuous, seasonal, conditional)
-  - **Numeric precision** (range bounds, exact values)
-- Selects highest-scored candidate as final answer
+## Validation Data
 
-### 4. Validation
-- Compares results against human-verified ground truth
-- Provides detailed extraction context for manual review
+Manual validation results are provided in `data/Observed_LLM_comparison.csv` containing:
+- Ground truth minimum flow values
+- Extraction correctness classifications
+- 50 documents manually reviewed
 
-## Document Types
+## Analysis and Figures
 
-**FERC Hydropower Licenses** (43 documents)
-- Date range: 1978-2018
-- Format: P[number]_License_[YYYYMMDD].pdf
-- Example: P1051_License_20070817.pdf
+Generate analysis figures from `src/`:
+```bash
+python create_pipeline3_figure.py         # Main performance analysis
+python create_model_comparison_figure.py  # Multi-model comparison
+```
 
-**Water Control Manuals** (7 documents)
-- Date range: 2014-2021
-- Format: [ProjectName]_WCM_[YEAR].pdf
-- Example: FortPeck_WCM_2018.pdf
+## Results
+
+Key findings from 50-document test set:
+- Simple extraction: High accuracy (>90%) for structured data, lower (<50%) for complex variables
+- Targeted extraction: 76% accuracy for minimum flow (vs 43% simple)
+- Processing time trade-off: 8.2s (simple) vs 249.7s (targeted) per document
+
+See paper for complete analysis.
 
 ## Configuration
 
@@ -145,30 +145,38 @@ Edit `src/config.py` to customize:
 - API endpoints
 - Output file paths
 
-## Validation
-
-Ground truth data in `data/Observed.csv` contains human-verified minimum flow values for 54 documents. The pipeline achieves 88.9% accuracy against this validation set.
-
 ## Troubleshooting
 
-**"Ollama server not responding"**
+**Ollama server not responding:**
 - Ensure Ollama is running: `ollama serve &`
 - Check server status: `curl http://localhost:11434/api/tags`
 
-**"Model not found"**
+**Model not found:**
 - Download model: `ollama pull llama3.3:70b`
 - Verify available models: `ollama list`
 
-**Slow processing**
+**Processing performance:**
 - Llama 70B requires significant compute resources
-- Expected: ~10 minutes per document
-- Consider using GPU acceleration if available
+- Consider GPU acceleration if available
+- Processing times: ~8s (simple) to ~250s (targeted) per document
 
-**Low accuracy on custom documents**
-- Pipeline is optimized for FERC licenses and WCMs
-- May require prompt tuning for other document types
-- See `task_definitions_min_flow.py` for prompt engineering
+## Citation
+
+If you use this code or data in your research, please cite:
+
+```bibtex
+@article{your_paper_2026,
+  title={Automated Extraction of Regulatory Information from Hydropower Documents Using Large Language Models},
+  author={Your Name et al.},
+  journal={Journal Name},
+  year={2026}
+}
+```
 
 ## License
 
 MIT License - See LICENSE file for details.
+
+## Contact
+
+For questions or issues, please open a GitHub issue or contact the authors.

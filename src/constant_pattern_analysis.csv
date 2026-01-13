@@ -1,0 +1,28 @@
+filename,Minimum_Flow_Value,why_constant,Category
+Grand Coulee WCM.pdf,"280,000 cfs","Fixed value, no months/seasonal/conditional keywords",Correct
+LaurelRiver_WCM_2017.pdf,60-70 cfs,"Fixed value, no months/seasonal/conditional keywords",Wrong
+P10440_License_19931109.pdf,9 cubic feet per second (cfs),Has 'wintertime/winter' but no specific months,Correct
+P10773_License_19900131.pdf,55 cfs,Has conditional words but not captured by keywords,Correct
+P10813_License_19920925.pdf,100.0 cfs,"Fixed value, no months/seasonal/conditional keywords",Wrong
+P11243_License_19971224.pdf,5 cfs,Has 'wintertime/winter' but no specific months,Correct
+P1235_License_19890531.pdf,25.0 cfs,Has conditional words but not captured by keywords,Correct
+P12379_License_20031224.pdf,40 cfs,Has conditional words but not captured by keywords,Wrong
+P12775_License_20110421.pdf,4 cfs,"Fixed value, no months/seasonal/conditional keywords",Correct
+P13124_License_20130801.pdf,12 cfs,Minimal context (<100 chars),Correct
+P13526_License_20100819.pdf,Not mentioned,No minimum flow value,Correct
+P14066_License_20130129.pdf,10 cfs,Has conditional words but not captured by keywords,Correct
+P1432_License_19900611.pdf,No minimum flow required,No minimum flow value,Correct
+P1494_License_19920424.pdf,25 cfs,"Fixed value, no months/seasonal/conditional keywords",Wrong
+P201_License_20030827.pdf,8.0 cfs,"Fixed value, no months/seasonal/conditional keywords",Correct
+P2170_License_20070824.pdf,30 cfs,"Fixed value, no months/seasonal/conditional keywords",Correct
+P2307_License_20180206.pdf,3.0 cfs,Has conditional words but not captured by keywords,Correct
+P2517_License_20040512.pdf,600 cfs,Has conditional words but not captured by keywords,Correct
+P2566_License_20010620.pdf,200 cfs,Has conditional words but not captured by keywords,Wrong
+P2972_License_19801106.pdf,Not mentioned,No minimum flow value,Correct
+P3015_License_19810805.pdf,200.0 cfs,"Fixed value, no months/seasonal/conditional keywords",Wrong
+P3017_License_19800717.pdf,Not mentioned,No minimum flow value,Correct
+P420_License_20000829.pdf,"47.0 cfs, 35.0 cfs",Has conditional words but not captured by keywords,Correct
+P620_License_20060208.pdf,10 cfs,"Fixed value, no months/seasonal/conditional keywords",Wrong
+P7828_License_19951226.pdf,No minimum flow required,No minimum flow value,Correct
+P8221_License_19851231.pdf,"439-1,250 cfs, average 497 cfs",Has conditional words but not captured by keywords,Wrong
+P925_License_20080430.pdf,"300.0 cfs, 600.0 cfs",Has conditional words but not captured by keywords,Correct
